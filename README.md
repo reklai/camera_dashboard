@@ -1,19 +1,28 @@
 Camera Grid Viewer
 
-Fullscreen multi-camera display with click-to-fullscreen and hold-to-swap.
+Fullscreen multi n-camera setup display with click-to-fullscreen and hold-to-swap.
 
 # Quick Start
 
 # 1. Install
+Ubuntu/Linux - Recommended (isolated environment)
+
+## Create isolated Python environment -> Activate it -> Install package safely isolated from systems
 ```
-chmod +x install.sh
-./install.sh
+python3 -m venv camera_env 
+source camera_env/bin/activate
+pip install --upgrade pip
+pip install PyQt6 opencv-python qdarkstyle imutils cv2-enumerate-cameras
 ```
 
-# 2. Run
-./main.py
+## Run (source if you havent before running)
+source camera_env/bin/activate
+python main.py
 
-Controls
+## To deactivate env later:
+deactivate
+
+## Application Features
 
     Click any camera = toggle fullscreen
 
@@ -24,22 +33,6 @@ Controls
     Click yellow camera = clear swap mode
 
     Ctrl+Q = quit
-
-## Install (manual)
-
-```
-pip install PyQt6 opencv-python qdarkstyle imutils cv2-enumerate-cameras
-```
-
-Linux only: sudo usermod -a -G video $USER (then logout/login)
-Files
-
-### Project Structure: 
-
-├── camera_grid.py     # Main app
-├── install.sh         # Setup script
-├── requirements.txt   # pip install -r
-└── README.md          # This file
 
 ##### Terminal prints debug activities:
 
