@@ -1,9 +1,7 @@
 """
-Multi-camera grid viewer - COMPLETE PRODUCTION VERSION.
-Single click = toggle fullscreen. Hold 400ms = swap mode.
+Multi-camera grid viewer
 """
 
-print("DEBUG: Loading libraries...")
 from PyQt6 import QtCore, QtGui, QtWidgets  # GUI framework - makes windows, buttons
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QThread, QTimer  # Core Qt features
 import sys  # System utilities - exit cleanly
@@ -16,7 +14,6 @@ import qdarkstyle
 import imutils  # Image resizing utilities
 import atexit  # Runs cleanup code when program exits
 import signal  # Handles Ctrl+C gracefully
-print("DEBUG: All libraries loaded")
 
 # CAMERA THREAD = Reads video (without freezing hopefully)
 class CaptureWorker(QThread):
