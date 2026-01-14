@@ -1,12 +1,14 @@
 Camera Grid Viewer
 
 Fullscreen multi-camera display with click-to-fullscreen and hold-to-swap.
-Quick Start
 
-bash
+# Quick Start
+
 # 1. Install
+```
 chmod +x install.sh
 ./install.sh
+```
 
 # 2. Run
 ./main.py
