@@ -25,9 +25,10 @@ Controls
 
 ## Install (manual)
 
-### bash
+```
 pip install PyQt6 opencv-python qdarkstyle imutils cv2-enumerate-cameras
-chmod +x camera_grid.py
+chmod +x main.py
+```
 
 Linux only: sudo usermod -a -G video $USER (then logout/login)
 Files
