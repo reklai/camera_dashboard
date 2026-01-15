@@ -246,8 +246,8 @@ class FullscreenOverlay(QtWidgets.QWidget):
         self.label = QtWidgets.QLabel(self)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setScaledContents(True)
-        self.label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
-                                 QtWidgets.QSizePolicy.Policy.Expanding)
+        self.label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                                 QtWidgets.QSizePolicy.Policy.Ignored)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
@@ -536,6 +536,11 @@ class CameraWidget(QtWidgets.QWidget):
         if self.is_fullscreen:
             return
         self._ensure_fullscreen_overlay()
+
+        screen = QtWidgets.QApplication.primaryScreen()
+        if screen:
+            self._fs_overlay.setGeometry(screen.geometry())
+
         self._fs_overlay.showFullScreen()
         self._fs_overlay.raise_()
         self._fs_overlay.activateWindow()
@@ -581,6 +586,13 @@ class CameraWidget(QtWidgets.QWidget):
             pix = QtGui.QPixmap.fromImage(img)
 
             if self.is_fullscreen and self._fs_overlay:
+                target_size = self._fs_overlay.size()
+                if target_size.width() > 0 and target_size.height() > 0:
+                    pix = pix.scaled(
+                        target_size,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
                 self._fs_overlay.label.setPixmap(pix)
             else:
                 self.video_label.setPixmap(pix)
@@ -848,7 +860,15 @@ def main():
     central_widget = QtWidgets.QWidget()
     central_widget.selected_camera = None
     mw.setCentralWidget(central_widget)
-    mw.showFullScreen()
+
+    mw.show()
+
+    def force_fullscreen():
+        mw.showFullScreen()
+        mw.raise_()
+        mw.activateWindow()
+
+    QtCore.QTimer.singleShot(0, force_fullscreen)
 
     screen = app.primaryScreen().availableGeometry()
     working_cameras = find_working_cameras()
