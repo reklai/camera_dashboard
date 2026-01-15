@@ -26,6 +26,7 @@ brew install python3
 ```
 sudo apt update
 sudo apt install python3 python3-venv python3-pip
+sudo apt install python3-pyqt6
 ```
 # Other linux Distros
 - Look at your main package manager (apt, dnf, pacman, yay . . .)
@@ -39,7 +40,7 @@ python3 --version
 
 ##  Create isolated Python environment -> Activate it -> Install package safely isolated from systems
 ```
-python3 -m venv camera_env 
+python3 -m venv camera_env
 source camera_env/bin/activate
 pip install --upgrade pip
 pip install PyQt6 opencv-python qdarkstyle imutils cv2-enumerate-cameras
@@ -49,7 +50,7 @@ pip install PyQt6 opencv-python qdarkstyle imutils cv2-enumerate-cameras
 
 ```
 pip install --upgrade pip
-pip install PyQt6 opencv-python qdarkstyle imutils cv2-enumerate-cameras
+pip install opencv-python qdarkstyle imutils cv2-enumerate-cameras
 ```
 
 # 2. Run (source if you havent before running)
@@ -79,7 +80,7 @@ deactivate
 
 -   Found 2 cameras: [0, 1]
 -   Press cam0_140123456
--   ENTER swap cam0_140123456  
+-   ENTER swap cam0_140123456
 -   SWAP cam0_140123456 ↔ cam1_140123789
 
 ## Require Packages Installments:
