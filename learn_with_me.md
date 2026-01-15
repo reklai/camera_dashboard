@@ -181,7 +181,7 @@ This keeps the app stable on low-power devices.
 
 ---
 
-Wierd Problems
+# I hate coding sometimes . . .
 
 ### OpenCV color order
 OpenCV gives BGR, but Qt expects RGB. If you forget conversion, colors look wrong.
