@@ -2,6 +2,8 @@
 Multi-camera grid viewer
 """
 
+import glob
+import subprocess
 from PyQt6 import QtCore, QtGui, QtWidgets  # GUI framework - makes windows, buttons
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QThread, QTimer  # Core Qt features
 import sys  # System utilities - exit cleanly
@@ -9,9 +11,6 @@ import cv2  # OpenCV - reads camera video frames
 import time 
 import traceback  # Error reporting - show crashes clearly
 from collections import deque  # Ring buffer - keeps last 4 frames
-from cv2_enumerate_cameras import enumerate_cameras  # Finds all /dev/video devices
-import qdarkstyle  
-import imutils  # Image resizing utilities
 import atexit  # Runs cleanup code when program exits
 import signal  # Handles Ctrl+C gracefully
 
@@ -38,7 +37,6 @@ class CaptureWorker(QThread):
         print(f"DEBUG: Camera {self.stream_link} thread started")
         while self._running:
             try:
-                # Reopen camera if disconnected
                 if self._cap is None or not self._cap.isOpened():
                     self._open_capture()
                     if not (self._cap and self._cap.isOpened()):
@@ -69,11 +67,12 @@ class CaptureWorker(QThread):
     def _open_capture(self):
         """Try V4L2 first (Linux USB cameras), then any backend."""
         try:
-            for api in [cv2.CAP_V4L2, cv2.CAP_ANY]:
-                cap = cv2.VideoCapture(self.stream_link, api)
+                cap = cv2.VideoCapture(self.stream_link, cv2.CAP_ANY)
                 if cap.isOpened():
                     # MJPG = lower CPU usage
                     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+                    cap.set(cv2.CAP_PROP_FPS, 30)           # Set 30 FPS
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # Clear old frames
                     self._cap = cap
                     return
                 cap.release()
@@ -443,24 +442,45 @@ def get_smart_grid(num_cameras):
         rows = (num_cameras + cols - 1) // cols
         return rows, cols
 
+def get_video_indexes():
+    """Get all /dev/videoX indexes."""
+    video_devices = glob.glob('/dev/video*')
+    indexes = []
+    
+    for device in sorted(video_devices):
+        index = int(device.split('video')[-1])
+        indexes.append(index)
+    
+    return indexes
+
 def find_working_cameras():
     """Test /dev/video0-4 + V4L2 devices."""
+    # Fix for glob pattern - explicitly loop over devices
+    video_devices = glob.glob('/dev/video*')
+    if not video_devices:
+        print("No /dev/video* devices found!")
+        return []
+    
+    for device in video_devices:
+        device_path = device  # /dev/video0, /dev/video1, etc.
+        subprocess.run(f"sudo fuser -vk {device_path}", shell=True)
+    
+    indexes = get_video_indexes()
     working = []
-    try:
-        enumerated = [cam.index for cam in enumerate_cameras(cv2.CAP_V4L2)]
-    except:
-        enumerated = []
-    test_indices = [0,1,2,3,4] + enumerated
-    for i in test_indices:
-        if i in working: continue
-        try:
-            cap = cv2.VideoCapture(i, cv2.CAP_V4L2)
-            if cap.isOpened():
-                working.append(i)
-                cap.release()
-        except:
-            pass
+    for cam_index in indexes: 
+        print(cam_index)
+        cap = cv2.VideoCapture(cam_index, cv2.CAP_ANY)
+        if not cap.isOpened():
+            print("Cannot open camera")
+            continue
+        else:
+            working.append(cam_index)
+        cap.release()
+        cv2.destroyAllWindows()
     return working
+
+
+
 
 def safe_cleanup(widgets):
     """Stop all camera threads."""
@@ -486,10 +506,8 @@ def main():
     atexit.register(lambda: safe_cleanup(camera_widgets))
 
     # Dark theme (fallback to Fusion)
-    try:
-        app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt6())
-    except:
-        app.setStyle(QtWidgets.QStyleFactory.create("Fusion"))
+    app.setStyle(QtWidgets.QStyleFactory.create("Fusion"))
+    app.setStyleSheet("QWidget { background: #2b2b2b; color: #ffffff; }")
 
     # Frameless fullscreen main window
     mw = QtWidgets.QMainWindow()
