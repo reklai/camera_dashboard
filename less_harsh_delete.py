@@ -218,6 +218,9 @@ class CameraWidget(QtWidgets.QWidget):
         self._grid_parent = None
         self._touch_active = False
 
+        self._fullscreen_window_flags = Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        self._normal_window_flags = Qt.WindowType.Widget
+
         self.normal_style = "border: 2px solid #555; background: black;"
         self.swap_ready_style = "border: 4px solid #FFFF00; background: black;"
         self.setStyleSheet(self.normal_style)
@@ -454,6 +457,7 @@ class CameraWidget(QtWidgets.QWidget):
             return
         try:
             logging.debug("%s -> fullscreen", self.widget_id)
+            self.setUpdatesEnabled(False)
             self._saved_parent = self.parent()
             self._saved_position = getattr(self, 'grid_position', None)
             if self._saved_parent and self._saved_parent.layout():
@@ -462,29 +466,36 @@ class CameraWidget(QtWidgets.QWidget):
                 except Exception:
                     pass
             self.setParent(None)
-            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+            self.setWindowFlags(self._fullscreen_window_flags)
             self.showFullScreen()
+            self.raise_()
+            self.activateWindow()
             self.is_fullscreen = True
         except Exception:
             logging.exception("go_fullscreen")
+        finally:
+            self.setUpdatesEnabled(True)
 
     def exit_fullscreen(self):
         if not self.is_fullscreen:
             return
         try:
             logging.debug("%s <- grid[%s]", self.widget_id, self._saved_position)
-            self.setWindowFlags(Qt.WindowType.Widget)
-            self.show()
+            self.setUpdatesEnabled(False)
+            self.setWindowFlags(self._normal_window_flags)
             if self._saved_parent and self._saved_position is not None:
                 self.setParent(self._saved_parent)
                 layout = self._saved_parent.layout()
                 if layout:
                     layout.addWidget(self, *self._saved_position)
+            self.show()
             self.is_fullscreen = False
             if self._saved_parent and self._saved_parent.window():
                 self._saved_parent.window().showFullScreen()
         except Exception:
             logging.exception("exit_fullscreen")
+        finally:
+            self.setUpdatesEnabled(True)
 
     @pyqtSlot(object)
     def on_frame(self, frame_bgr):
