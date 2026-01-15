@@ -180,3 +180,29 @@ This keeps the app stable on low-power devices.
 - Dynamic FPS protects system stability.
 
 ---
+
+Wierd Problems
+
+### OpenCV color order
+OpenCV gives BGR, but Qt expects RGB. If you forget conversion, colors look wrong.
+
+### QImage lifetime
+If you build a QImage from a temporary NumPy buffer, the memory can be freed early. You must ensure the buffer stays alive or deep-copy.
+
+### Thread shutdown
+QThread must be stopped cleanly. If you quit the app while capture is running, you can get crashes or hanging threads.
+
+### Camera re-open loops
+Some cameras fail after disconnects. You need a retry delay or backoff, or you can hammer the device.
+
+### Widget resizing
+If you don’t keep aspect ratio when scaling, previews stretch. If you do keep it, you need to handle black bars.
+
+### Fullscreen overlay focus
+A fullscreen widget can steal focus and prevent clicks on the underlying grid until it’s closed.
+
+### Swap state edge cases
+If swap-select is active and the user clicks the same tile again, you must handle “cancel” properly.
+
+### FPS timer drift
+If your timer interval is too low, the UI can drift or lag under load. Use a stable interval and measure actual FPS.
