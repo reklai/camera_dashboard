@@ -1077,7 +1077,7 @@ def main():
         perf_timer.start()
 
     app.aboutToQuit.connect(lambda: safe_cleanup(camera_widgets))
-    QtGui.QShortcut(QtGui.QKeySequence('Ctrl+Q'), mw,
+    QtGui.QShortcut(QtGui.QKeySequence('q'), mw,
                     lambda: (safe_cleanup(camera_widgets), app.quit()))
 
     logging.info("Short click=fullscreen toggle. Hold 400ms=swap mode. Ctrl+Q=quit.")
