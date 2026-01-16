@@ -55,6 +55,14 @@ RECOVER_HOLD_COUNT = 3      # consecutive checks before increasing fps
 RESCAN_INTERVAL_MS = 5000
 FAILED_CAMERA_COOLDOWN_SEC = 30.0
 
+# ============================================================
+# FIXED CAMERA PROFILE (ALL COUNTS)
+# ------------------------------------------------------------
+FIXED_CAPTURE_WIDTH = 800
+FIXED_CAPTURE_HEIGHT = 450
+FIXED_CAPTURE_FPS = 20
+FIXED_UI_FPS = 20
+
 def _read_cpu_load_ratio():
     """Read 1-minute load average normalized to CPU count."""
     try:
@@ -1007,8 +1015,8 @@ def find_working_cameras():
     return working
 
 # ============================================================
-# CLEANUP + PROFILE SELECTION
-# ------------------------------------------------------------
+# CLEANUP
+# ------------------------------------------------============
 def safe_cleanup(widgets):
     """Gracefully stop all camera worker threads."""
     logging.info("Cleaning all cameras")
@@ -1017,16 +1025,6 @@ def safe_cleanup(widgets):
             w.cleanup()
         except Exception:
             pass
-
-def choose_profile(camera_count):
-    """Pick capture resolution and FPS based on camera count."""
-    if camera_count <= 1:
-        return 1280, 720, 30, 30
-    if camera_count == 2:
-        return 960, 540, 20, 20
-    if camera_count == 3:
-        return 800, 450, 15, 15
-    return 640, 480, 15, 15
 
 # ============================================================
 # MAIN ENTRYPOINT
@@ -1097,9 +1095,11 @@ def main():
     )
     all_widgets.append(settings_tile)
 
-    active_camera_count = max(1, min(len(working_cameras), CAMERA_SLOT_COUNT))
-    cap_w, cap_h, cap_fps, ui_fps = choose_profile(active_camera_count)
-    logging.info("Profile: %dx%d @ %d FPS (UI %d FPS)", cap_w, cap_h, cap_fps, ui_fps)
+    cap_w = FIXED_CAPTURE_WIDTH
+    cap_h = FIXED_CAPTURE_HEIGHT
+    cap_fps = FIXED_CAPTURE_FPS
+    ui_fps = FIXED_UI_FPS
+    logging.info("Fixed profile: %dx%d @ %d FPS (UI %d FPS)", cap_w, cap_h, cap_fps, ui_fps)
 
     # Exactly 3 camera slots at all times
     for slot_idx in range(CAMERA_SLOT_COUNT):
