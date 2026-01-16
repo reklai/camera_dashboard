@@ -431,7 +431,13 @@ class CameraWidget(QtWidgets.QWidget):
         if self._fs_overlay is None:
             self._fs_overlay = FullscreenOverlay(self.exit_fullscreen)
 
-    def attach_camera(self, stream_link, target_fps, request_capture_size):
+    def _apply_ui_fps(self, ui_fps):
+        """Update UI render timer to match camera UI FPS."""
+        self.ui_render_fps = max(1, int(ui_fps))
+        if self.render_timer:
+            self.render_timer.setInterval(int(1000 / self.ui_render_fps))
+
+    def attach_camera(self, stream_link, target_fps, request_capture_size, ui_fps=None):
         """Attach a camera to an existing placeholder slot."""
         if self.capture_enabled and self.worker:
             return
@@ -440,6 +446,9 @@ class CameraWidget(QtWidgets.QWidget):
         self.camera_stream_link = stream_link
         self.base_target_fps = target_fps
         self.current_target_fps = target_fps
+
+        if ui_fps is not None:
+            self._apply_ui_fps(ui_fps)
 
         cap_w, cap_h = request_capture_size if request_capture_size else (None, None)
         self.worker = CaptureWorker(
@@ -1218,7 +1227,7 @@ def main():
                 )
                 if ok is not None:
                     slot = placeholder_slots.pop(0)
-                    slot.attach_camera(ok, cap_fps, (cap_w, cap_h))
+                    slot.attach_camera(ok, cap_fps, (cap_w, cap_h), ui_fps=ui_fps)
                     camera_widgets.append(slot)
                     active_indexes.add(ok)
                     failed_indexes.pop(ok, None)
