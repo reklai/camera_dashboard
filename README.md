@@ -2,6 +2,7 @@
 
 ## Supported OS
 - Raspberry Pi 4/5 (64‑bit recommended)
+- Linux Operating Systems
 
 ---
 
