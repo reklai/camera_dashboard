@@ -1,9 +1,5 @@
 # Camera Grid = Raspberry Pi Setup (Manual Run)
 
-This guide explains how to install dependencies and start the app manually on a Raspberry Pi.
-
-User_Require File is meant for my personal experimentation based on my client's actual need vs want
-
 ## Supported OS
 - Raspberry Pi 4/5 (64‑bit recommended)
 
