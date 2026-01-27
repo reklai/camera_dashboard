@@ -53,6 +53,9 @@ pip install pyudev
 > sudo apt install -y python3-opencv
 > sudo apt install python3-pyqt6
 > sudo apt-get install -y python3-pyudev
+> sudo apt install python3-pyqt6 python3-opencv python3-opengl
+> sudo apt install gstreamer1.0-tools gstreamer1.0-plugins-good
+> sudo apt install python3-picamera2
 > ```
 
 ---

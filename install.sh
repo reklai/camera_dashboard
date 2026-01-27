@@ -83,6 +83,9 @@ if ! pip install PyQt6 opencv-python pyudev; then
   sudo apt install -y python3-opencv
   sudo apt install -y python3-pyqt6
   sudo apt install -y python3-pyudev
+  sudo apt install -y python3-pyqt6 python3-opencv python3-opengl
+  sudo apt install -y gstreamer1.0-tools gstreamer1.0-plugins-good
+  sudo apt install -y python3-picamera2
 
   # Reactivate venv if it exists (even if system Python packages are used)
   # shellcheck disable=SC1091
