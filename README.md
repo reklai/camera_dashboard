@@ -1,6 +1,6 @@
 # Camera Dashboard
 
-A multi-camera system meant for cargo vechicle optimized for Raspberry Pi but compatible with any Linux system. Features real-time video streaming, dynamic performance tuning, hot-plugging support, and an intuitive touch-enabled interface.
+A multi-camera system meant for blind-spot monitoring on cargo vechicle optimized for Raspberry Pi but compatible with any Linux system. Features real-time video streaming, dynamic performance tuning, hot-plugging support, and an intuitive touch-enabled interface.
 
 ![Camera Dashboard](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Linux-lightgrey.svg)
