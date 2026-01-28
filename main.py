@@ -497,30 +497,13 @@ class GLVideoWidget(QOpenGLWidget):
             GL_RGB, GL_UNSIGNED_BYTE, frame_data
         )
         
-        # Calculate aspect-ratio-preserving quad
-        widget_aspect = self.width() / max(1, self.height())
-        frame_aspect = frame_size[0] / max(1, frame_size[1])
-        
-        if frame_aspect > widget_aspect:
-            # Frame is wider - fit to width
-            quad_w = 1.0
-            quad_h = widget_aspect / frame_aspect
-            x_off = 0.0
-            y_off = (1.0 - quad_h) / 2.0
-        else:
-            # Frame is taller - fit to height
-            quad_h = 1.0
-            quad_w = frame_aspect / widget_aspect
-            x_off = (1.0 - quad_w) / 2.0
-            y_off = 0.0
-        
-        # Draw textured quad
+        # Draw textured quad filling the entire widget (no aspect ratio preservation)
         glEnable(GL_TEXTURE_2D)
         glBegin(GL_QUADS)
-        glTexCoord2f(0, 0); glVertex2f(x_off, y_off)
-        glTexCoord2f(1, 0); glVertex2f(x_off + quad_w, y_off)
-        glTexCoord2f(1, 1); glVertex2f(x_off + quad_w, y_off + quad_h)
-        glTexCoord2f(0, 1); glVertex2f(x_off, y_off + quad_h)
+        glTexCoord2f(0, 0); glVertex2f(0, 0)
+        glTexCoord2f(1, 0); glVertex2f(1, 0)
+        glTexCoord2f(1, 1); glVertex2f(1, 1)
+        glTexCoord2f(0, 1); glVertex2f(0, 1)
         glEnd()
         glDisable(GL_TEXTURE_2D)
 
@@ -1278,7 +1261,7 @@ def safe_cleanup(widgets):
 
 def choose_profile(camera_count):
     """Pick capture resolution and FPS based on camera count (Pi-optimized)."""
-    return 640, 480, 15, 24
+    return 640, 480, 20, 20
 
 # ============================================================
 # MAIN ENTRYPOINT
