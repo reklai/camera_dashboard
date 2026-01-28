@@ -4,7 +4,6 @@ A multi-camera surveillance dashboard built with Python and PyQt6, optimized for
 
 ![Camera Dashboard](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Linux-lightgrey.svg)
-![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 ## Quick Start
 
@@ -152,15 +151,15 @@ graph TB
     A[Main Application] --> B[Camera Discovery]
     A --> C[Grid Layout Manager]
     A --> D[Performance Monitor]
-    
+
     C --> E[CameraWidget 1]
     C --> F[CameraWidget 2]
     C --> G[CameraWidget 3]
-    
+
     E --> H[CaptureWorker Thread]
     F --> I[CaptureWorker Thread]
     G --> J[CaptureWorker Thread]
-    
+
     H --> K[OpenCV VideoCapture]
     I --> L[OpenCV VideoCapture]
     J --> M[OpenCV VideoCapture]
@@ -331,7 +330,7 @@ python3 -c "from PyQt6 import QtWidgets; print('PyQt6 OK')"
 
 ## Technical Documentation
 
-For deep technical insights, see [learn_with_me.md](learn_with_me.md) which covers:
+For deep technical insights, see [project.md](project.md) which covers:
 - Detailed threading architecture
 - Frame processing pipeline
 - Signal/slot communication patterns
@@ -339,16 +338,10 @@ For deep technical insights, see [learn_with_me.md](learn_with_me.md) which cove
 
 ---
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
 ## Acknowledgments
 
 - **OpenCV** team for excellent computer vision library
-- **PyQt6** for robust cross-platform GUI framework  
+- **PyQt6** for robust cross-platform GUI framework
 - **Raspberry Pi Foundation** for making computing accessible
 
 ---
