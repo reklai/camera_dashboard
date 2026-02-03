@@ -65,10 +65,17 @@ logging.basicConfig(level=logging.INFO,
 DYNAMIC_FPS_ENABLED = True
 PERF_CHECK_INTERVAL_MS = 2000
 MIN_DYNAMIC_FPS = 5
+MIN_DYNAMIC_UI_FPS = 10
+UI_FPS_STEP = 2
 CPU_LOAD_THRESHOLD = 0.75   # 75% avg load
 CPU_TEMP_THRESHOLD_C = 70.0  # Celsius
 STRESS_HOLD_COUNT = 2       # consecutive checks before reducing fps
 RECOVER_HOLD_COUNT = 3      # consecutive checks before increasing fps
+
+STALE_FRAME_TIMEOUT_SEC = 1.5
+RESTART_COOLDOWN_SEC = 5.0
+MAX_RESTARTS_PER_WINDOW = 3
+RESTART_WINDOW_SEC = 30.0
 
 # ============================================================
 # CAMERA RESCAN (HOT-PLUG SUPPORT)
@@ -157,6 +164,8 @@ class CaptureWorker(QThread):
         self._emit_interval = 1.0 / 30.0
         self.capture_width = capture_width
         self.capture_height = capture_height
+        self._online = False
+        self._open_fail_count = 0
         # Buffer holds most recent frames, used to decouple capture from UI.
         self.buffer = deque(maxlen=maxlen)
         # Lock protects changes to FPS/emit interval from other threads.
@@ -171,24 +180,38 @@ class CaptureWorker(QThread):
                 if self._cap is None or not self._cap.isOpened():
                     self._open_capture()
                     if not (self._cap and self._cap.isOpened()):
+                        self._open_fail_count += 1
+                        if self._open_fail_count % 10 == 0:
+                            logging.warning("Camera %s open failed (%d attempts)",
+                                            self.stream_link, self._open_fail_count)
+                        if self._online:
+                            self._online = False
+                            self.status_changed.emit(False)
                         time.sleep(self._reconnect_backoff)
                         self._reconnect_backoff = min(
                             self._reconnect_backoff * 1.5, 10.0)
                         continue
                     self._reconnect_backoff = 1.0
-                    self.status_changed.emit(True)
+                    self._open_fail_count = 0
+                    if not self._online:
+                        self._online = True
+                        self.status_changed.emit(True)
 
                 # Grab & retrieve keeps latency low vs read().
                 grabbed = self._cap.grab()
                 if not grabbed:
                     self._close_capture()
-                    self.status_changed.emit(False)
+                    if self._online:
+                        self._online = False
+                        self.status_changed.emit(False)
                     continue
 
                 ret, frame = self._cap.retrieve()
                 if not ret or frame is None:
                     self._close_capture()
-                    self.status_changed.emit(False)
+                    if self._online:
+                        self._online = False
+                        self.status_changed.emit(False)
                     continue
 
                 now = time.time()
@@ -261,6 +284,21 @@ class CaptureWorker(QThread):
             if cap.isOpened():
                 self._cap = cap
                 self._configure_fps_from_camera()
+                try:
+                    raw = int(self._cap.get(cv2.CAP_PROP_FOURCC))
+                    fourcc = "".join([chr((raw >> (8 * i)) & 0xFF) for i in range(4)])
+                    if fourcc.strip() and fourcc != "MJPG":
+                        logging.info("Camera %s using FOURCC=%s", self.stream_link, fourcc)
+                except Exception:
+                    pass
+                try:
+                    actual_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    actual_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    actual_fps = float(self._cap.get(cv2.CAP_PROP_FPS))
+                    logging.info("Camera %s format %dx%d @ %.1f FPS",
+                                 self.stream_link, actual_w, actual_h, actual_fps)
+                except Exception:
+                    pass
                 logging.info(
                     "Opened capture %s (requested %sx%s) -> emit fps=%.1f",
                     self.stream_link,
@@ -490,7 +528,14 @@ class CameraWidget(QtWidgets.QWidget):
         self._last_rendered_id = -1
         self._last_rendered_size = None
         self._last_frame_ts = 0.0
-        self._stale_frame_timeout_sec = 2.0
+        self._stale_frame_timeout_sec = STALE_FRAME_TIMEOUT_SEC
+        self._restart_cooldown_sec = RESTART_COOLDOWN_SEC
+        self._restart_window_sec = RESTART_WINDOW_SEC
+        self._max_restarts_per_window = MAX_RESTARTS_PER_WINDOW
+        self._restart_events = deque(maxlen=MAX_RESTARTS_PER_WINDOW * 2)
+        self._last_restart_ts = 0.0
+        self._last_status_log_ts = 0.0
+        self._last_status_log_interval_sec = 10.0
         self._pixmap_cache = QtGui.QPixmap()
         self._scaled_pixmap_cache = None
         self._scaled_pixmap_cache_size = None
@@ -542,6 +587,11 @@ class CameraWidget(QtWidgets.QWidget):
             self.ui_timer.start()
         else:
             self.ui_timer = None
+
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(5000)
+        self._status_timer.timeout.connect(self._log_status)
+        self._status_timer.start()
 
         self.installEventFilter(self)
         self.video_label.installEventFilter(self)
@@ -875,6 +925,7 @@ class CameraWidget(QtWidgets.QWidget):
             if self._last_frame_ts and (time.time() - self._last_frame_ts) > self._stale_frame_timeout_sec:
                 self._latest_frame = None
                 self._render_placeholder("DISCONNECTED")
+                self._restart_capture_if_stale()
                 return
 
             if self.is_fullscreen and self._fs_overlay:
@@ -976,6 +1027,7 @@ class CameraWidget(QtWidgets.QWidget):
         if online:
             self.setStyleSheet(self.normal_style)
             self.video_label.setText("")
+            self._last_frame_ts = time.time()
         else:
             self._latest_frame = None
             self._render_placeholder("DISCONNECTED")
@@ -1014,6 +1066,77 @@ class CameraWidget(QtWidgets.QWidget):
                 self.worker.set_target_fps(fps)
         except Exception:
             logging.exception("set_dynamic_fps")
+
+    def set_dynamic_ui_fps(self, ui_fps):
+        """Apply dynamic UI FPS change from stress monitor."""
+        if self.settings_mode:
+            return
+        try:
+            ui_fps = int(ui_fps)
+            if ui_fps < MIN_DYNAMIC_UI_FPS:
+                ui_fps = MIN_DYNAMIC_UI_FPS
+            self._apply_ui_fps(ui_fps)
+        except Exception:
+            logging.exception("set_dynamic_ui_fps")
+
+    def _restart_capture_if_stale(self):
+        """Restart the capture worker after a stale frame timeout."""
+        if not self.capture_enabled or not self.worker:
+            return
+        now = time.time()
+        if (now - self._last_restart_ts) < self._restart_cooldown_sec:
+            return
+        recent = [t for t in self._restart_events if (now - t) <= self._restart_window_sec]
+        if len(recent) >= self._max_restarts_per_window:
+            logging.warning("Restart limit reached for %s", self.camera_stream_link)
+            return
+        self._restart_events.append(now)
+        self._last_restart_ts = now
+        try:
+            logging.info("Restarting capture for %s after stale frames", self.camera_stream_link)
+            self.worker.stop()
+        except Exception:
+            pass
+
+        cap_w = getattr(self.worker, "capture_width", None)
+        cap_h = getattr(self.worker, "capture_height", None)
+        target_fps = self.current_target_fps or self.base_target_fps
+        self.worker = CaptureWorker(
+            self.camera_stream_link,
+            parent=self,
+            maxlen=1,
+            target_fps=target_fps,
+            capture_width=cap_w,
+            capture_height=cap_h,
+        )
+        self.worker.frame_ready.connect(self.on_frame)
+        self.worker.status_changed.connect(self.on_status_changed)
+        self.worker.start()
+        self._render_placeholder("CONNECTING...")
+
+    def _log_status(self):
+        """Periodic status log for observability."""
+        if self.settings_mode:
+            return
+        now = time.time()
+        if (now - self._last_status_log_ts) < self._last_status_log_interval_sec:
+            return
+        self._last_status_log_ts = now
+        format_fourcc = "unknown"
+        if self.worker and getattr(self.worker, "_cap", None):
+            try:
+                raw = int(self.worker._cap.get(cv2.CAP_PROP_FOURCC))
+                format_fourcc = "".join([chr((raw >> (8 * i)) & 0xFF) for i in range(4)])
+            except Exception:
+                format_fourcc = "unknown"
+        logging.info(
+            "Camera %s status online=%s fps=%.1f ui_fps=%d fourcc=%s",
+            self.camera_stream_link,
+            "yes" if self._latest_frame is not None else "no",
+            float(self.current_target_fps or 0),
+            int(self.ui_render_fps or 0),
+            format_fourcc,
+        )
 
     def set_night_mode(self, enabled):
         """Enable or disable night mode rendering."""
@@ -1443,6 +1566,10 @@ def main():
                     new_fps = max(MIN_DYNAMIC_FPS, cur - 2)
                     if new_fps < cur:
                         w.set_dynamic_fps(new_fps)
+                    ui_base = w.ui_render_fps or ui_fps
+                    new_ui = max(MIN_DYNAMIC_UI_FPS, ui_base - UI_FPS_STEP)
+                    if new_ui < ui_base:
+                        w.set_dynamic_ui_fps(new_ui)
                 stress_counter["stress"] = 0
                 logging.info("Stress detected (load=%s, temp=%s). Lowering FPS.",
                              f"{load_ratio:.2f}" if load_ratio is not None else "n/a",
@@ -1455,6 +1582,10 @@ def main():
                     new_fps = min(base, cur + 2)
                     if new_fps > cur:
                         w.set_dynamic_fps(new_fps)
+                    ui_base = w.ui_render_fps or ui_fps
+                    new_ui = min(ui_fps, ui_base + UI_FPS_STEP)
+                    if new_ui > ui_base:
+                        w.set_dynamic_ui_fps(new_ui)
                 stress_counter["recover"] = 0
                 logging.info("System stable. Restoring FPS.")
 
