@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
-set -euo pipefail # basically fails at first error instead of running to finish script
+set -euo pipefail
+
+# Camera Dashboard installer for Raspberry Pi / Linux
+# Run this script from the project root directory:
+#   chmod +x install.sh
+#   ./install.sh
+
+# ---------- helper functions ----------
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+echo_section() {
+  echo
+  echo "========================================"
+  echo "$1"
+  echo "========================================"
 }
 
 # ---------- 0) basic checks ----------
@@ -14,24 +28,24 @@ if [[ "$EUID" -eq 0 ]]; then
 fi
 
 if ! command_exists sudo; then
-  echo "sudo is required but not found."
+  echo "sudo is required but not found. Please install/configure sudo and try again."
   exit 1
 fi
 
 if ! command_exists python3; then
-  echo "python3 is required but not found."
+  echo "python3 is required but not found. Please install Python 3 and try again."
   exit 1
 fi
 
 # ---------- 1) update the system ----------
 
-echo "Updating system packages (sudo apt update && sudo apt upgrade -y)"
+echo_section "1) Updating system packages (sudo apt update && sudo apt upgrade -y)"
 sudo apt update
 sudo apt upgrade -y
 
 # ---------- 2) install system dependencies ----------
 
-echo "Installing system dependencies (sudo apt install ...)"
+echo_section "2) Installing system dependencies (sudo apt install ...)"
 
 sudo apt install -y \
   python3 python3-pip python3-venv \
@@ -55,6 +69,8 @@ source .venv/bin/activate
 
 # ---------- 4) install python packages ----------
 
+echo_section "4) Installing Python packages via pip in the virtual environment"
+
 pip install --upgrade pip
 if ! pip install PyQt6 opencv-python pyudev; then
   echo
@@ -69,7 +85,6 @@ if ! pip install PyQt6 opencv-python pyudev; then
   sudo apt install -y python3-pyudev
   sudo apt install -y python3-pyqt6 python3-opencv python3-opengl
   sudo apt install -y gstreamer1.0-tools gstreamer1.0-plugins-good
-  sudo apt install -y python3-picamera2
 
   # Reactivate venv if it exists (even if system Python packages are used)
   # shellcheck disable=SC1091
@@ -78,9 +93,33 @@ fi
 
 # ---------- 5) fix camera permissions ----------
 
+echo_section "5) Adding current user to 'video' group for camera access"
+
 sudo usermod -aG video "$USER"
 
 echo
 echo "You may need to log out and back in (or reboot) for group changes to take effect."
 echo "You can later check permissions with:  ls -l /dev/video*"
 
+# ---------- 6) final instructions ----------
+
+echo_section "6) Finished"
+
+cat <<'EOF'
+Installation steps are complete.
+
+To run the app:
+
+  source .venv/bin/activate
+  python3 main.py
+
+Notes:
+- Do NOT use sudo with 'python3 -m venv' or 'pip install'.
+- Run the app as a normal user. If no cameras are found, it will show "Disconnected".
+- Exit with Ctrl+Q or Ctrl+C in the terminal, or Q in the application window.
+
+If you absolutely must run as sudo (not recommended), you can use:
+
+  sudo -E python3 main.py
+
+EOF

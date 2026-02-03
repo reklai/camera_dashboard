@@ -106,7 +106,24 @@ pip install --upgrade pip
 pip install PyQt6 opencv-python pyudev
 ```
 
-#### 5. Set Camera Permissions
+## If `pyqt6 / opencv-python / pyudev` fails to install on your Pi, use the system package instead:
+>
+> ```bash
+> sudo apt install -y python3-opencv
+> sudo apt install python3-pyqt6
+> sudo apt-get install -y python3-pyudev
+> sudo apt install python3-pyqt6 python3-opencv python3-opengl
+> sudo apt install gstreamer1.0-tools gstreamer1.0-plugins-good
+> sudo apt install python3-picamera2
+> ```
+
+---
+
+## 5) Fix camera permissions (recommended)
+
+You should not run the entire app as `sudo`.  
+Instead, grant camera access to your user:
+
 ```bash
 sudo usermod -aG video $USER
 # Log out and back in for changes to take effect
@@ -272,11 +289,12 @@ pip install PyQt6 opencv-python pyudev
 python3 main.py
 ```
 
-### Code Style
-- Follow PEP 8 Python conventions
-- Use type hints where appropriate
-- Add logging for new features
-- Document complex algorithms
+
+---
+
+## If you must run as sudo (not recommended)
+
+This can break GUI permissions and your venv, but if you must:
 
 ### Testing
 ```bash
@@ -308,18 +326,20 @@ python3 -c "from PyQt6 import QtWidgets; print('PyQt6 OK')"
 
 ## Technical Documentation
 
-For deep technical insights, see [project.md](project.md) which covers:
-- Detailed threading architecture
-- Frame processing pipeline
-- Signal/slot communication patterns
-- Performance optimization techniques
+- UI FPS is intentionally lower than capture FPS to keep latency stable.
+- The app prefers MJPEG when the camera supports it.
+- USB cameras should be visible as `/dev/video*`
+- If no cameras are found, the app will show "Disconnected"
+- Exit with Ctrl+Q or Ctrl+C in terminal or Q inside application window
 
 ---
 
-## Acknowledgments
+## Quick Overview
 
-- **OpenCV** team for excellent computer vision library
-- **PyQt6** for robust cross-platform GUI framework
-- **Raspberry Pi Foundation** for making computing accessible
+- `choose_profile()` controls capture resolution + FPS.
+- `CPU_LOAD_THRESHOLD`, `CPU_TEMP_THRESHOLD_C`, `MIN_DYNAMIC_FPS` tune stress FPS.
+- `MIN_DYNAMIC_UI_FPS`, `UI_FPS_STEP` tune UI FPS throttling.
+- `STALE_FRAME_TIMEOUT_SEC` + restart window settings control recovery.
+- `UI_FPS_LOGGING` and `DEBUG_PRINTS` toggle logs.
 
 ---

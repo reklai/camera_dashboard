@@ -31,6 +31,7 @@ import signal
 import platform
 import os
 import re
+import numpy as np
 
 # ============================================================
 # DEBUG PRINTS (disabled by default)
@@ -39,6 +40,8 @@ import re
 # ============================================================
 # DEBUG_PRINTS = True
 DEBUG_PRINTS = False
+UI_FPS_LOGGING = False
+
 
 
 def dprint(*args, **kwargs):
@@ -56,17 +59,25 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ============================================================
-# DYNAMIC PERFORMANCE TUNING
+# PERFORMANCE + RECOVERY TUNING
 # ------------------------------------------------------------
-# Controls how FPS adapts when CPU or temperature is high.
+# Controls FPS adaptation and stale-frame recovery behavior.
 # ============================================================
 DYNAMIC_FPS_ENABLED = True
 PERF_CHECK_INTERVAL_MS = 2000
 MIN_DYNAMIC_FPS = 5
-CPU_LOAD_THRESHOLD = 0.85   # 85% avg load
+MIN_DYNAMIC_UI_FPS = 10
+UI_FPS_STEP = 2
+CPU_LOAD_THRESHOLD = 0.75   # 75% avg load
 CPU_TEMP_THRESHOLD_C = 70.0  # Celsius
 STRESS_HOLD_COUNT = 2       # consecutive checks before reducing fps
 RECOVER_HOLD_COUNT = 3      # consecutive checks before increasing fps
+
+# Stale frame detection + bounded auto-restart policy.
+STALE_FRAME_TIMEOUT_SEC = 1.5
+RESTART_COOLDOWN_SEC = 5.0
+MAX_RESTARTS_PER_WINDOW = 3
+RESTART_WINDOW_SEC = 30.0
 
 # ============================================================
 # CAMERA RESCAN (HOT-PLUG SUPPORT)
@@ -155,6 +166,8 @@ class CaptureWorker(QThread):
         self._emit_interval = 1.0 / 30.0
         self.capture_width = capture_width
         self.capture_height = capture_height
+        self._online = False
+        self._open_fail_count = 0
         # Buffer holds most recent frames, used to decouple capture from UI.
         self.buffer = deque(maxlen=maxlen)
         # Lock protects changes to FPS/emit interval from other threads.
@@ -169,24 +182,38 @@ class CaptureWorker(QThread):
                 if self._cap is None or not self._cap.isOpened():
                     self._open_capture()
                     if not (self._cap and self._cap.isOpened()):
+                        self._open_fail_count += 1
+                        if self._open_fail_count % 10 == 0:
+                            logging.warning("Camera %s open failed (%d attempts)",
+                                            self.stream_link, self._open_fail_count)
+                        if self._online:
+                            self._online = False
+                            self.status_changed.emit(False)
                         time.sleep(self._reconnect_backoff)
                         self._reconnect_backoff = min(
                             self._reconnect_backoff * 1.5, 10.0)
                         continue
                     self._reconnect_backoff = 1.0
-                    self.status_changed.emit(True)
+                    self._open_fail_count = 0
+                    if not self._online:
+                        self._online = True
+                        self.status_changed.emit(True)
 
                 # Grab & retrieve keeps latency low vs read().
                 grabbed = self._cap.grab()
                 if not grabbed:
                     self._close_capture()
-                    self.status_changed.emit(False)
+                    if self._online:
+                        self._online = False
+                        self.status_changed.emit(False)
                     continue
 
                 ret, frame = self._cap.retrieve()
                 if not ret or frame is None:
                     self._close_capture()
-                    self.status_changed.emit(False)
+                    if self._online:
+                        self._online = False
+                        self.status_changed.emit(False)
                     continue
 
                 now = time.time()
@@ -240,6 +267,13 @@ class CaptureWorker(QThread):
             except Exception:
                 pass
 
+            # Try to prevent blocking reads on flaky cameras.
+            try:
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 2000)
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 2000)
+            except Exception:
+                pass
+
             # Request FPS; 0 may let camera choose.
             try:
                 if self._target_fps and self._target_fps > 0:
@@ -252,6 +286,21 @@ class CaptureWorker(QThread):
             if cap.isOpened():
                 self._cap = cap
                 self._configure_fps_from_camera()
+                try:
+                    raw = int(self._cap.get(cv2.CAP_PROP_FOURCC))
+                    fourcc = "".join([chr((raw >> (8 * i)) & 0xFF) for i in range(4)])
+                    if fourcc.strip() and fourcc != "MJPG":
+                        logging.info("Camera %s using FOURCC=%s", self.stream_link, fourcc)
+                except Exception:
+                    pass
+                try:
+                    actual_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    actual_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    actual_fps = float(self._cap.get(cv2.CAP_PROP_FPS))
+                    logging.info("Camera %s format %dx%d @ %.1f FPS",
+                                 self.stream_link, actual_w, actual_h, actual_fps)
+                except Exception:
+                    pass
                 logging.info(
                     "Opened capture %s (requested %sx%s) -> emit fps=%.1f",
                     self.stream_link,
@@ -328,6 +377,7 @@ class FullscreenOverlay(QtWidgets.QWidget):
         super().__init__(None, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.on_click_exit = on_click_exit
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
         self.setStyleSheet("background:black;")
         self.label = QtWidgets.QLabel(self)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -343,6 +393,12 @@ class FullscreenOverlay(QtWidgets.QWidget):
         if event.button() == QtCore.Qt.MouseButton.LeftButton:
             self.on_click_exit()
         super().mousePressEvent(event)
+
+    def event(self, event):
+        if event.type() in (QtCore.QEvent.Type.TouchBegin, QtCore.QEvent.Type.TouchEnd):
+            self.on_click_exit()
+            return True
+        return super().event(event)
 
 # ============================================================
 # CAMERA WIDGET
@@ -370,6 +426,7 @@ class CameraWidget(QtWidgets.QWidget):
         placeholder_text=None,
         settings_mode=False,
         on_restart=None,
+        on_night_mode_toggle=None,
     ):
         """Initialize tile UI, worker thread, and timers."""
         super().__init__(parent)
@@ -404,6 +461,7 @@ class CameraWidget(QtWidgets.QWidget):
         self.capture_enabled = bool(enable_capture)
         self.placeholder_text = placeholder_text
         self.settings_mode = settings_mode
+        self.night_mode_enabled = False
 
         # Visual styles for normal and swap-ready state
         self.normal_style = "border: 2px solid #555; background: black;"
@@ -438,26 +496,53 @@ class CameraWidget(QtWidgets.QWidget):
             if on_restart:
                 restart_button.clicked.connect(on_restart)
 
+            night_mode_button = QtWidgets.QPushButton("Nightmode: Off")
+            night_mode_button.setStyleSheet(button_style)
+            if on_night_mode_toggle:
+                night_mode_button.clicked.connect(on_night_mode_toggle)
+            self.night_mode_button = night_mode_button
+
             exit_button = QtWidgets.QPushButton("Exit")
             exit_button.setStyleSheet(button_style)
             exit_button.clicked.connect(self._exit_app)
 
             layout.addStretch(1)
             layout.addWidget(self.video_label)
-            layout.addSpacing(12)
+            layout.addSpacing(6)
             layout.addWidget(
                 restart_button, alignment=Qt.AlignmentFlag.AlignCenter)
-            layout.addSpacing(8)
+            layout.addSpacing(4)
+            layout.addWidget(
+                night_mode_button, alignment=Qt.AlignmentFlag.AlignCenter)
+            layout.addSpacing(4)
             layout.addWidget(
                 exit_button, alignment=Qt.AlignmentFlag.AlignCenter)
             layout.addStretch(1)
         else:
             layout.addWidget(self.video_label)
 
-        # FPS counters for logging UI render performance.
+        # Render state, staleness tracking, and caches.
         self.frame_count = 0
         self.prev_time = time.time()
         self._latest_frame = None
+        self._last_placeholder_text = None
+        self._frame_id = 0
+        self._last_rendered_id = -1
+        self._last_rendered_size = None
+        self._last_frame_ts = 0.0
+        self._stale_frame_timeout_sec = STALE_FRAME_TIMEOUT_SEC
+        self._restart_cooldown_sec = RESTART_COOLDOWN_SEC
+        self._restart_window_sec = RESTART_WINDOW_SEC
+        self._max_restarts_per_window = MAX_RESTARTS_PER_WINDOW
+        self._restart_events = deque(maxlen=MAX_RESTARTS_PER_WINDOW * 2)
+        self._last_restart_ts = 0.0
+        self._last_status_log_ts = 0.0
+        self._last_status_log_interval_sec = 10.0
+        self._pixmap_cache = QtGui.QPixmap()
+        self._scaled_pixmap_cache = None
+        self._scaled_pixmap_cache_size = None
+        self._night_gray = None
+        self._night_bgr = None
 
         # Base FPS is the desired target; current FPS is adjusted dynamically.
         self.base_target_fps = target_fps
@@ -485,7 +570,6 @@ class CameraWidget(QtWidgets.QWidget):
             self._render_placeholder(self.placeholder_text or "DISCONNECTED")
 
         # Timer to render latest frame at a stable UI FPS.
-        # This is intentionally decoupled from capture FPS.
         if not self.settings_mode:
             self.ui_render_fps = max(1, int(ui_fps))
             self.render_timer = QTimer(self)
@@ -496,14 +580,20 @@ class CameraWidget(QtWidgets.QWidget):
             self.ui_render_fps = 0
             self.render_timer = None
 
-        # Timer to print UI FPS diagnostics (only for real cameras)
-        if self.capture_enabled and not self.settings_mode:
+        # Optional UI FPS diagnostics (only for real cameras)
+        if self.capture_enabled and not self.settings_mode and UI_FPS_LOGGING:
             self.ui_timer = QTimer(self)
             self.ui_timer.setInterval(1000)
             self.ui_timer.timeout.connect(self._print_fps)
             self.ui_timer.start()
         else:
             self.ui_timer = None
+
+        # Periodic status logging for observability.
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(5000)
+        self._status_timer.timeout.connect(self._log_status)
+        self._status_timer.start()
 
         self.installEventFilter(self)
         self.video_label.installEventFilter(self)
@@ -554,7 +644,7 @@ class CameraWidget(QtWidgets.QWidget):
         self.worker.status_changed.connect(self.on_status_changed)
         self.worker.start()
 
-        if self.ui_timer is None:
+        if self.ui_timer is None and UI_FPS_LOGGING:
             self.ui_timer = QTimer(self)
             self.ui_timer.setInterval(1000)
             self.ui_timer.timeout.connect(self._print_fps)
@@ -802,6 +892,8 @@ class CameraWidget(QtWidgets.QWidget):
                 return
             # Only store; UI thread renders on its timer.
             self._latest_frame = frame_bgr
+            self._frame_id += 1
+            self._last_frame_ts = time.time()
         except Exception:
             logging.exception("on_frame")
 
@@ -809,12 +901,15 @@ class CameraWidget(QtWidgets.QWidget):
         """Render placeholder text when no frame is available."""
         if self.settings_mode:
             return
+        if text == self._last_placeholder_text and not self.swap_active:
+            return
         target_label = self._fs_overlay.label if (
             self.is_fullscreen and self._fs_overlay) else self.video_label
         target_label.setPixmap(QtGui.QPixmap())
         target_label.setText(text)
         target_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         target_label.setStyleSheet("color: #bbbbbb; font-size: 24px;")
+        self._last_placeholder_text = text
         if self.swap_active:
             self.setStyleSheet(self.swap_ready_style)
 
@@ -828,6 +923,46 @@ class CameraWidget(QtWidgets.QWidget):
                 self._render_placeholder(
                     self.placeholder_text or "DISCONNECTED")
                 return
+
+            if self._last_frame_ts and (time.time() - self._last_frame_ts) > self._stale_frame_timeout_sec:
+                self._latest_frame = None
+                self._render_placeholder("DISCONNECTED")
+                self._restart_capture_if_stale()
+                return
+
+            if self.is_fullscreen and self._fs_overlay:
+                target_size = self._fs_overlay.size()
+            else:
+                target_size = self.video_label.size()
+
+            if (self._frame_id == self._last_rendered_id and
+                    self._last_rendered_size == target_size):
+                return
+
+            if self.night_mode_enabled:
+                try:
+                    if frame_bgr.ndim == 2:
+                        h, w = frame_bgr.shape
+                    else:
+                        h, w = frame_bgr.shape[:2]
+
+                    if self._night_gray is None or self._night_gray.shape != (h, w):
+                        self._night_gray = np.empty((h, w), dtype=frame_bgr.dtype)
+                    if self._night_bgr is None or self._night_bgr.shape[:2] != (h, w):
+                        self._night_bgr = np.empty((h, w, 3), dtype=frame_bgr.dtype)
+
+                    if frame_bgr.ndim == 2:
+                        cv2.convertScaleAbs(frame_bgr, alpha=1.6, beta=0, dst=self._night_gray)
+                    else:
+                        cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY, dst=self._night_gray)
+                        cv2.convertScaleAbs(self._night_gray, alpha=1.6, beta=0, dst=self._night_gray)
+
+                    self._night_bgr[:, :, 0].fill(0)
+                    self._night_bgr[:, :, 1].fill(0)
+                    self._night_bgr[:, :, 2] = self._night_gray
+                    frame_bgr = self._night_bgr
+                except Exception:
+                    pass
 
             # Convert numpy frame to Qt image, handling grayscale or BGR.
             if frame_bgr.ndim == 2:
@@ -845,26 +980,49 @@ class CameraWidget(QtWidgets.QWidget):
                     QtGui.QImage.Format.Format_BGR888
                 )
 
-            pix = QtGui.QPixmap.fromImage(img)
+            self._pixmap_cache.convertFromImage(img)
 
             # Fullscreen scales to screen size; grid uses label size.
             if self.is_fullscreen and self._fs_overlay:
-                target_size = self._fs_overlay.size()
                 if target_size.width() > 0 and target_size.height() > 0:
-                    pix = pix.scaled(
-                        target_size,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.FastTransformation
-                    )
-                self._fs_overlay.label.setPixmap(pix)
+                    if (self._scaled_pixmap_cache is None or
+                            self._scaled_pixmap_cache_size != target_size):
+                        self._scaled_pixmap_cache = QtGui.QPixmap(target_size)
+                        self._scaled_pixmap_cache_size = target_size
+                    self._scaled_pixmap_cache.fill(Qt.GlobalColor.black)
+                    target_rect = QtCore.QRect(0, 0, target_size.width(), target_size.height())
+                    painter = QtGui.QPainter(self._scaled_pixmap_cache)
+                    painter.drawPixmap(target_rect, self._pixmap_cache)
+                    painter.end()
+                    self._fs_overlay.label.setPixmap(self._scaled_pixmap_cache)
+                else:
+                    self._fs_overlay.label.setPixmap(self._pixmap_cache)
                 self._fs_overlay.label.setText("")
             else:
-                self.video_label.setPixmap(pix)
+                if (target_size.width() > 0 and target_size.height() > 0 and
+                        self._pixmap_cache.size() != target_size):
+                    if (self._scaled_pixmap_cache is None or
+                            self._scaled_pixmap_cache_size != target_size):
+                        self._scaled_pixmap_cache = QtGui.QPixmap(target_size)
+                        self._scaled_pixmap_cache_size = target_size
+                    self._scaled_pixmap_cache.fill(Qt.GlobalColor.black)
+                    target_rect = QtCore.QRect(0, 0, target_size.width(), target_size.height())
+                    painter = QtGui.QPainter(self._scaled_pixmap_cache)
+                    painter.drawPixmap(target_rect, self._pixmap_cache)
+                    painter.end()
+                    self.video_label.setPixmap(self._scaled_pixmap_cache)
+                else:
+                    self.video_label.setPixmap(self._pixmap_cache)
                 self.video_label.setText("")
 
-            self.frame_count += 1
+            self._last_rendered_id = self._frame_id
+            self._last_rendered_size = target_size
+            self._last_placeholder_text = None
+            if UI_FPS_LOGGING:
+                self.frame_count += 1
         except Exception:
             logging.exception("render frame")
+
 
     @pyqtSlot(bool)
     def on_status_changed(self, online):
@@ -872,8 +1030,10 @@ class CameraWidget(QtWidgets.QWidget):
         if online:
             self.setStyleSheet(self.normal_style)
             self.video_label.setText("")
+            self._last_frame_ts = time.time()
         else:
             self._latest_frame = None
+            self._last_rendered_id = -1
             self._render_placeholder("DISCONNECTED")
 
     def reset_style(self):
@@ -884,6 +1044,8 @@ class CameraWidget(QtWidgets.QWidget):
 
     def _print_fps(self):
         """Log rendering FPS for this widget."""
+        if not UI_FPS_LOGGING:
+            return
         try:
             now = time.time()
             elapsed = now - self.prev_time
@@ -908,6 +1070,87 @@ class CameraWidget(QtWidgets.QWidget):
                 self.worker.set_target_fps(fps)
         except Exception:
             logging.exception("set_dynamic_fps")
+
+    def set_dynamic_ui_fps(self, ui_fps):
+        """Apply dynamic UI FPS change from stress monitor."""
+        if self.settings_mode:
+            return
+        try:
+            ui_fps = int(ui_fps)
+            if ui_fps < MIN_DYNAMIC_UI_FPS:
+                ui_fps = MIN_DYNAMIC_UI_FPS
+            self._apply_ui_fps(ui_fps)
+        except Exception:
+            logging.exception("set_dynamic_ui_fps")
+
+    def _restart_capture_if_stale(self):
+        """Restart the capture worker after a stale frame timeout."""
+        if not self.capture_enabled or not self.worker:
+            return
+        now = time.time()
+        if (now - self._last_restart_ts) < self._restart_cooldown_sec:
+            return
+        recent = [t for t in self._restart_events if (now - t) <= self._restart_window_sec]
+        if len(recent) >= self._max_restarts_per_window:
+            logging.warning("Restart limit reached for %s", self.camera_stream_link)
+            return
+        self._restart_events.append(now)
+        self._last_restart_ts = now
+        try:
+            logging.info("Restarting capture for %s after stale frames", self.camera_stream_link)
+            self.worker.stop()
+        except Exception:
+            pass
+
+        cap_w = getattr(self.worker, "capture_width", None)
+        cap_h = getattr(self.worker, "capture_height", None)
+        target_fps = self.current_target_fps or self.base_target_fps
+        self.worker = CaptureWorker(
+            self.camera_stream_link,
+            parent=self,
+            maxlen=1,
+            target_fps=target_fps,
+            capture_width=cap_w,
+            capture_height=cap_h,
+        )
+        self.worker.frame_ready.connect(self.on_frame)
+        self.worker.status_changed.connect(self.on_status_changed)
+        self.worker.start()
+        self._render_placeholder("CONNECTING...")
+
+    def _log_status(self):
+        """Periodic status log for observability."""
+        if self.settings_mode:
+            return
+        now = time.time()
+        if (now - self._last_status_log_ts) < self._last_status_log_interval_sec:
+            return
+        self._last_status_log_ts = now
+        format_fourcc = "unknown"
+        if self.worker and getattr(self.worker, "_cap", None):
+            try:
+                raw = int(self.worker._cap.get(cv2.CAP_PROP_FOURCC))
+                format_fourcc = "".join([chr((raw >> (8 * i)) & 0xFF) for i in range(4)])
+            except Exception:
+                format_fourcc = "unknown"
+        logging.info(
+            "Camera %s status online=%s fps=%.1f ui_fps=%d fourcc=%s",
+            self.camera_stream_link,
+            "yes" if self._latest_frame is not None else "no",
+            float(self.current_target_fps or 0),
+            int(self.ui_render_fps or 0),
+            format_fourcc,
+        )
+
+    def set_night_mode(self, enabled):
+        """Enable or disable night mode rendering."""
+        self.night_mode_enabled = bool(enabled)
+
+    def set_night_mode_button_label(self, enabled):
+        """Update settings tile button label for night mode."""
+        if self.settings_mode and hasattr(self, "night_mode_button"):
+            label = "Nightmode: On" if enabled else "Nightmode: Off"
+            self.night_mode_button.setText(label)
 
     def cleanup(self):
         """Stop the capture worker thread cleanly."""
@@ -1152,7 +1395,7 @@ def safe_cleanup(widgets):
 
 def choose_profile(camera_count):
     """Pick capture resolution and FPS based on camera count."""
-    return 640, 480, 20, 20
+    return 640, 480, 20, 15
 
 # ============================================================
 # MAIN ENTRYPOINT
@@ -1218,6 +1461,17 @@ def main():
         python = sys.executable
         os.execv(python, [python] + sys.argv)
 
+    night_mode_state = {"enabled": False}
+
+    def toggle_night_mode():
+        """Toggle night mode for all camera widgets."""
+        night_mode_state["enabled"] = not night_mode_state["enabled"]
+        enabled = night_mode_state["enabled"]
+        for w in all_widgets:
+            if hasattr(w, "set_night_mode"):
+                w.set_night_mode(enabled)
+        settings_tile.set_night_mode_button_label(enabled)
+
     # Settings tile (always present, top-left)
     settings_tile = CameraWidget(
         width=1,
@@ -1232,6 +1486,7 @@ def main():
         placeholder_text="SETTINGS",
         settings_mode=True,
         on_restart=restart_app,
+        on_night_mode_toggle=toggle_night_mode,
     )
     all_widgets.append(settings_tile)
 
@@ -1255,6 +1510,7 @@ def main():
                 ui_fps=ui_fps,
                 enable_capture=True,
             )
+            cw.set_night_mode(night_mode_state["enabled"])
             camera_widgets.append(cw)
         else:
             cw = CameraWidget(
@@ -1269,6 +1525,7 @@ def main():
                 enable_capture=False,
                 placeholder_text="DISCONNECTED",
             )
+            cw.set_night_mode(night_mode_state["enabled"])
             placeholder_slots.append(cw)
         all_widgets.append(cw)
 
@@ -1313,6 +1570,10 @@ def main():
                     new_fps = max(MIN_DYNAMIC_FPS, cur - 2)
                     if new_fps < cur:
                         w.set_dynamic_fps(new_fps)
+                    ui_base = w.ui_render_fps or ui_fps
+                    new_ui = max(MIN_DYNAMIC_UI_FPS, ui_base - UI_FPS_STEP)
+                    if new_ui < ui_base:
+                        w.set_dynamic_ui_fps(new_ui)
                 stress_counter["stress"] = 0
                 logging.info("Stress detected (load=%s, temp=%s). Lowering FPS.",
                              f"{load_ratio:.2f}" if load_ratio is not None else "n/a",
@@ -1325,6 +1586,10 @@ def main():
                     new_fps = min(base, cur + 2)
                     if new_fps > cur:
                         w.set_dynamic_fps(new_fps)
+                    ui_base = w.ui_render_fps or ui_fps
+                    new_ui = min(ui_fps, ui_base + UI_FPS_STEP)
+                    if new_ui > ui_base:
+                        w.set_dynamic_ui_fps(new_ui)
                 stress_counter["recover"] = 0
                 logging.info("System stable. Restoring FPS.")
 
@@ -1369,6 +1634,7 @@ def main():
                     slot = placeholder_slots.pop(0)
                     slot.attach_camera(
                         ok, cap_fps, (cap_w, cap_h), ui_fps=ui_fps)
+                    slot.set_night_mode(night_mode_state["enabled"])
                     camera_widgets.append(slot)
                     active_indexes.add(ok)
                     failed_indexes.pop(ok, None)
