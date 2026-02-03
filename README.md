@@ -183,10 +183,21 @@ The top-left tile provides:
 ```bash
 # Enable debug logging
 export DEBUG_PRINTS=true
-
-# Disable dynamic FPS adjustment
-export DYNAMIC_FPS_ENABLED=false
 ```
+
+### Config File (Recommended)
+Defaults are in `config.ini`. You can override the path with:
+
+```bash
+export CAMERA_DASHBOARD_CONFIG=/path/to/config.ini
+```
+
+Key sections:
+- `[logging]` file, level, rotation
+- `[performance]` dynamic FPS and thermal thresholds
+- `[camera]` rescan timing and slot count
+- `[profile]` capture resolution/FPS
+- `[health]` heartbeat log interval
 
 ### Performance Tuning
 Key constants in `main.py`:
@@ -275,6 +286,29 @@ python3 main.py 2>&1 | grep FPS
 - USB cameras should be visible as `/dev/video*`
 - If no cameras are found, the app will show "Disconnected"
 - Exit with Ctrl+Q or Ctrl+C in terminal or Q inside application window
+
+---
+
+## Production Deployment (Offline Raspberry Pi)
+
+### 1) Install dependencies (online once)
+```bash
+./install.sh
+```
+
+### 2) Systemd service (auto-start + watchdog)
+The installer now sets up the systemd service automatically.
+
+### 3) Logs
+Default log file: `./logs/camera_dashboard.log` (rotates by size)
+
+### 4) Offline install strategy
+- On a connected Pi, build wheels: `pip download -r requirements.txt -d wheelhouse`
+- Copy `wheelhouse/` to offline Pi and install with:
+  `pip install --no-index --find-links wheelhouse -r requirements.txt`
+
+### 5) Health heartbeat
+The app logs a periodic health line and sends a systemd watchdog ping when enabled.
 
 ## Quick Overview
 

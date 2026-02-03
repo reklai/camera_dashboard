@@ -72,7 +72,13 @@ source .venv/bin/activate
 echo_section "4) Installing Python packages via pip in the virtual environment"
 
 pip install --upgrade pip
-if ! pip install PyQt6 opencv-python pyudev; then
+if [[ -f "requirements.txt" ]]; then
+  pip install -r requirements.txt || true
+else
+  pip install PyQt6 opencv-python pyudev || true
+fi
+
+if ! python3 -c "import PyQt6, cv2, pyudev" >/dev/null 2>&1; then
   echo
   echo "pip installation failed for PyQt6 / opencv-python / pyudev."
   echo "Falling back to system packages via apt (sudo)."
@@ -103,7 +109,29 @@ echo "You can later check permissions with:  ls -l /dev/video*"
 
 # ---------- 6) final instructions ----------
 
-echo_section "6) Finished"
+echo_section "6) Installing systemd service"
+
+SERVICE_NAME="camera-dashboard.service"
+SERVICE_SRC="$(dirname "$0")/${SERVICE_NAME}"
+SERVICE_DST="/etc/systemd/system/${SERVICE_NAME}"
+
+if [[ -f "${SERVICE_SRC}" ]]; then
+  echo "Installing ${SERVICE_NAME} to ${SERVICE_DST}"
+  sudo cp "${SERVICE_SRC}" "${SERVICE_DST}"
+  echo "Reloading systemd"
+  sudo systemctl daemon-reload
+  echo "Enabling ${SERVICE_NAME}"
+  sudo systemctl enable "${SERVICE_NAME}"
+  echo "Starting ${SERVICE_NAME}"
+  sudo systemctl start "${SERVICE_NAME}"
+  echo "Service status:"
+  sudo systemctl status "${SERVICE_NAME}" --no-pager
+else
+  echo "Service file not found: ${SERVICE_SRC}"
+  echo "Skipping systemd install. Edit ${SERVICE_NAME} paths and rerun if needed."
+fi
+
+echo_section "7) Finished"
 
 cat <<'EOF'
 Installation steps are complete.
@@ -117,6 +145,7 @@ Notes:
 - Do NOT use sudo with 'python3 -m venv' or 'pip install'.
 - Run the app as a normal user. If no cameras are found, it will show "Disconnected".
 - Exit with Ctrl+Q or Ctrl+C in the terminal, or Q in the application window.
+ - If the service fails, update camera-dashboard.service paths and rerun install.sh
 
 If you absolutely must run as sudo (not recommended), you can use:
 

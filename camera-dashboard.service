@@ -1,0 +1,22 @@
+[Unit]
+Description=Camera Dashboard
+After=network.target
+
+[Service]
+Type=notify
+WorkingDirectory=/home/pi/camera_dashboard
+ExecStart=/home/pi/camera_dashboard/.venv/bin/python3 /home/pi/camera_dashboard/main.py
+Restart=always
+RestartSec=2
+User=pi
+Group=pi
+Environment=PYTHONUNBUFFERED=1
+Environment=CAMERA_DASHBOARD_CONFIG=/home/pi/camera_dashboard/config.ini
+Environment=CAMERA_DASHBOARD_LOG_FILE=/home/pi/camera_dashboard/logs/camera_dashboard.log
+WatchdogSec=15
+NotifyAccess=main
+Nice=-5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

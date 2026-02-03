@@ -14,11 +14,14 @@
 # 11. CLEANUP + PROFILE SELECTION
 # 12. MAIN ENTRYPOINT
 # ============================================================
+import configparser
 import logging
+from logging.handlers import RotatingFileHandler
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import glob
 import subprocess
+import socket
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QThread, QTimer
 import sys
@@ -51,12 +54,18 @@ def dprint(*args, **kwargs):
 
 
 # ============================================================
-# LOGGING
+# LOGGING + CONFIG
 # ------------------------------------------------------------
-# Standard logging for normal runtime info and errors.
+# Logging is configured at runtime from config/env.
 # ============================================================
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(message)s")
+LOG_LEVEL = "INFO"
+LOG_FILE = "./logs/camera_dashboard.log"
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
+LOG_TO_STDOUT = True
+
+CONFIG_PATH = os.environ.get("CAMERA_DASHBOARD_CONFIG", "./config.ini")
+LOG_FILE_ENV = os.environ.get("CAMERA_DASHBOARD_LOG_FILE")
 
 # ============================================================
 # PERFORMANCE + RECOVERY TUNING
@@ -84,6 +93,210 @@ RESTART_WINDOW_SEC = 30.0
 # ------------------------------------------------------------
 RESCAN_INTERVAL_MS = 5000
 FAILED_CAMERA_COOLDOWN_SEC = 30.0
+
+# ============================================================
+# APP SETTINGS
+# ------------------------------------------------------------
+CAMERA_SLOT_COUNT = 3
+HEALTH_LOG_INTERVAL_SEC = 30.0
+KILL_DEVICE_HOLDERS = True
+
+PROFILE_CAPTURE_WIDTH = 640
+PROFILE_CAPTURE_HEIGHT = 480
+PROFILE_CAPTURE_FPS = 20
+PROFILE_UI_FPS = 15
+
+
+def _as_bool(value, default):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+def _as_int(value, default, min_value=None, max_value=None):
+    try:
+        if value is None:
+            return default
+        parsed = int(value)
+    except Exception:
+        return default
+    if min_value is not None:
+        parsed = max(min_value, parsed)
+    if max_value is not None:
+        parsed = min(max_value, parsed)
+    return parsed
+
+
+def _as_float(value, default, min_value=None, max_value=None):
+    try:
+        if value is None:
+            return default
+        parsed = float(value)
+    except Exception:
+        return default
+    if min_value is not None:
+        parsed = max(min_value, parsed)
+    if max_value is not None:
+        parsed = min(max_value, parsed)
+    return parsed
+
+
+def _load_config(path):
+    parser = configparser.ConfigParser()
+    if not path:
+        return parser
+    if os.path.exists(path):
+        parser.read(path)
+    return parser
+
+
+def apply_config(parser):
+    global LOG_LEVEL
+    global LOG_FILE
+    global LOG_MAX_BYTES
+    global LOG_BACKUP_COUNT
+    global LOG_TO_STDOUT
+
+    global DYNAMIC_FPS_ENABLED
+    global PERF_CHECK_INTERVAL_MS
+    global MIN_DYNAMIC_FPS
+    global MIN_DYNAMIC_UI_FPS
+    global UI_FPS_STEP
+    global CPU_LOAD_THRESHOLD
+    global CPU_TEMP_THRESHOLD_C
+    global STRESS_HOLD_COUNT
+    global RECOVER_HOLD_COUNT
+    global STALE_FRAME_TIMEOUT_SEC
+    global RESTART_COOLDOWN_SEC
+    global MAX_RESTARTS_PER_WINDOW
+    global RESTART_WINDOW_SEC
+    global RESCAN_INTERVAL_MS
+    global FAILED_CAMERA_COOLDOWN_SEC
+    global CAMERA_SLOT_COUNT
+    global HEALTH_LOG_INTERVAL_SEC
+    global KILL_DEVICE_HOLDERS
+    global PROFILE_CAPTURE_WIDTH
+    global PROFILE_CAPTURE_HEIGHT
+    global PROFILE_CAPTURE_FPS
+    global PROFILE_UI_FPS
+
+    if parser.has_section("logging"):
+        LOG_LEVEL = parser.get("logging", "level", fallback=LOG_LEVEL)
+        LOG_FILE = parser.get("logging", "file", fallback=LOG_FILE)
+        LOG_MAX_BYTES = _as_int(parser.get("logging", "max_bytes", fallback=LOG_MAX_BYTES),
+                               LOG_MAX_BYTES, min_value=1024)
+        LOG_BACKUP_COUNT = _as_int(parser.get("logging", "backup_count", fallback=LOG_BACKUP_COUNT),
+                                   LOG_BACKUP_COUNT, min_value=1)
+        LOG_TO_STDOUT = _as_bool(parser.get("logging", "stdout", fallback=LOG_TO_STDOUT), LOG_TO_STDOUT)
+
+    if parser.has_section("performance"):
+        DYNAMIC_FPS_ENABLED = _as_bool(parser.get("performance", "dynamic_fps", fallback=DYNAMIC_FPS_ENABLED),
+                                       DYNAMIC_FPS_ENABLED)
+        PERF_CHECK_INTERVAL_MS = _as_int(
+            parser.get("performance", "perf_check_interval_ms", fallback=PERF_CHECK_INTERVAL_MS),
+            PERF_CHECK_INTERVAL_MS, min_value=250)
+        MIN_DYNAMIC_FPS = _as_int(parser.get("performance", "min_dynamic_fps", fallback=MIN_DYNAMIC_FPS),
+                                  MIN_DYNAMIC_FPS, min_value=1)
+        MIN_DYNAMIC_UI_FPS = _as_int(parser.get("performance", "min_dynamic_ui_fps", fallback=MIN_DYNAMIC_UI_FPS),
+                                     MIN_DYNAMIC_UI_FPS, min_value=1)
+        UI_FPS_STEP = _as_int(parser.get("performance", "ui_fps_step", fallback=UI_FPS_STEP),
+                              UI_FPS_STEP, min_value=1)
+        CPU_LOAD_THRESHOLD = _as_float(
+            parser.get("performance", "cpu_load_threshold", fallback=CPU_LOAD_THRESHOLD),
+            CPU_LOAD_THRESHOLD, min_value=0.1, max_value=1.0)
+        CPU_TEMP_THRESHOLD_C = _as_float(
+            parser.get("performance", "cpu_temp_threshold_c", fallback=CPU_TEMP_THRESHOLD_C),
+            CPU_TEMP_THRESHOLD_C, min_value=30.0, max_value=100.0)
+        STRESS_HOLD_COUNT = _as_int(
+            parser.get("performance", "stress_hold_count", fallback=STRESS_HOLD_COUNT),
+            STRESS_HOLD_COUNT, min_value=1)
+        RECOVER_HOLD_COUNT = _as_int(
+            parser.get("performance", "recover_hold_count", fallback=RECOVER_HOLD_COUNT),
+            RECOVER_HOLD_COUNT, min_value=1)
+        STALE_FRAME_TIMEOUT_SEC = _as_float(
+            parser.get("performance", "stale_frame_timeout_sec", fallback=STALE_FRAME_TIMEOUT_SEC),
+            STALE_FRAME_TIMEOUT_SEC, min_value=0.5)
+        RESTART_COOLDOWN_SEC = _as_float(
+            parser.get("performance", "restart_cooldown_sec", fallback=RESTART_COOLDOWN_SEC),
+            RESTART_COOLDOWN_SEC, min_value=1.0)
+        MAX_RESTARTS_PER_WINDOW = _as_int(
+            parser.get("performance", "max_restarts_per_window", fallback=MAX_RESTARTS_PER_WINDOW),
+            MAX_RESTARTS_PER_WINDOW, min_value=1)
+        RESTART_WINDOW_SEC = _as_float(
+            parser.get("performance", "restart_window_sec", fallback=RESTART_WINDOW_SEC),
+            RESTART_WINDOW_SEC, min_value=5.0)
+
+    if parser.has_section("camera"):
+        RESCAN_INTERVAL_MS = _as_int(
+            parser.get("camera", "rescan_interval_ms", fallback=RESCAN_INTERVAL_MS),
+            RESCAN_INTERVAL_MS, min_value=500)
+        FAILED_CAMERA_COOLDOWN_SEC = _as_float(
+            parser.get("camera", "failed_camera_cooldown_sec", fallback=FAILED_CAMERA_COOLDOWN_SEC),
+            FAILED_CAMERA_COOLDOWN_SEC, min_value=1.0)
+        CAMERA_SLOT_COUNT = _as_int(
+            parser.get("camera", "slot_count", fallback=CAMERA_SLOT_COUNT),
+            CAMERA_SLOT_COUNT, min_value=1, max_value=8)
+        KILL_DEVICE_HOLDERS = _as_bool(
+            parser.get("camera", "kill_device_holders", fallback=KILL_DEVICE_HOLDERS),
+            KILL_DEVICE_HOLDERS)
+
+    if parser.has_section("profile"):
+        PROFILE_CAPTURE_WIDTH = _as_int(
+            parser.get("profile", "capture_width", fallback=PROFILE_CAPTURE_WIDTH),
+            PROFILE_CAPTURE_WIDTH, min_value=160, max_value=1920)
+        PROFILE_CAPTURE_HEIGHT = _as_int(
+            parser.get("profile", "capture_height", fallback=PROFILE_CAPTURE_HEIGHT),
+            PROFILE_CAPTURE_HEIGHT, min_value=120, max_value=1080)
+        PROFILE_CAPTURE_FPS = _as_int(
+            parser.get("profile", "capture_fps", fallback=PROFILE_CAPTURE_FPS),
+            PROFILE_CAPTURE_FPS, min_value=1, max_value=60)
+        PROFILE_UI_FPS = _as_int(
+            parser.get("profile", "ui_fps", fallback=PROFILE_UI_FPS),
+            PROFILE_UI_FPS, min_value=1, max_value=60)
+
+    if parser.has_section("health"):
+        HEALTH_LOG_INTERVAL_SEC = _as_float(
+            parser.get("health", "log_interval_sec", fallback=HEALTH_LOG_INTERVAL_SEC),
+            HEALTH_LOG_INTERVAL_SEC, min_value=5.0)
+
+    if LOG_FILE_ENV:
+        LOG_FILE = LOG_FILE_ENV
+
+
+def configure_logging():
+    level_name = (LOG_LEVEL or "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.handlers = []
+
+    if LOG_FILE:
+        log_dir = os.path.dirname(LOG_FILE)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+        )
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+
+    if LOG_TO_STDOUT:
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(formatter)
+        root.addHandler(stream_handler)
+
+    logging.captureWarnings(True)
 
 
 def _read_cpu_load_ratio():
@@ -132,6 +345,43 @@ def _is_system_stressed():
         stressed = True
 
     return stressed, load_ratio, temp_c
+
+
+def _write_watchdog_heartbeat():
+    if os.getenv("WATCHDOG_USEC") is None:
+        return
+    _systemd_notify("WATCHDOG=1")
+
+
+def _systemd_notify(message):
+    try:
+        sock_path = os.environ.get("NOTIFY_SOCKET")
+        if not sock_path:
+            return
+        if sock_path[0] == "@":
+            sock_path = "\0" + sock_path[1:]
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        sock.connect(sock_path)
+        sock.sendall(message.encode("utf-8"))
+        sock.close()
+    except Exception:
+        logging.debug("systemd notify failed")
+
+
+def _log_health_summary(camera_widgets, placeholder_slots, active_indexes, failed_indexes):
+    online = 0
+    for w in camera_widgets:
+        if getattr(w, "_latest_frame", None) is not None:
+            online += 1
+    logging.info(
+        "Health cameras online=%d/%d placeholders=%d active=%d failed=%d",
+        online,
+        len(camera_widgets),
+        len(placeholder_slots),
+        len(active_indexes),
+        len(failed_indexes),
+    )
+    _write_watchdog_heartbeat()
 
 # ============================================================
 # CAMERA CAPTURE WORKER
@@ -1311,7 +1561,7 @@ def test_single_camera(
             return cam_index
         time.sleep(retry_delay)
 
-    if allow_kill:
+    if allow_kill and KILL_DEVICE_HOLDERS:
         killed = kill_device_holders(device_path)
         if killed:
             for _ in range(post_kill_retries):
@@ -1395,7 +1645,7 @@ def safe_cleanup(widgets):
 
 def choose_profile(camera_count):
     """Pick capture resolution and FPS based on camera count."""
-    return 640, 480, 20, 15
+    return PROFILE_CAPTURE_WIDTH, PROFILE_CAPTURE_HEIGHT, PROFILE_CAPTURE_FPS, PROFILE_UI_FPS
 
 # ============================================================
 # MAIN ENTRYPOINT
@@ -1406,13 +1656,16 @@ def choose_profile(camera_count):
 
 def main():
     """Create the UI, discover cameras, and start event loop."""
+    parser = _load_config(CONFIG_PATH)
+    apply_config(parser)
+    configure_logging()
     logging.info("Starting camera grid app")
+    logging.info("Config loaded from %s", CONFIG_PATH)
     app = QtWidgets.QApplication(sys.argv)
+    _systemd_notify("READY=1")
     camera_widgets = []
     all_widgets = []
     placeholder_slots = []
-
-    CAMERA_SLOT_COUNT = 3
 
     # Clean shutdown on Ctrl+C
     def on_sigint(sig, frame):
@@ -1646,6 +1899,19 @@ def main():
         rescan_timer.setInterval(RESCAN_INTERVAL_MS)
         rescan_timer.timeout.connect(rescan_and_attach)
         rescan_timer.start()
+
+    if HEALTH_LOG_INTERVAL_SEC > 0:
+        health_timer = QTimer(mw)
+        health_timer.setInterval(int(HEALTH_LOG_INTERVAL_SEC * 1000))
+        health_timer.timeout.connect(
+            lambda: _log_health_summary(
+                camera_widgets,
+                placeholder_slots,
+                active_indexes,
+                failed_indexes,
+            )
+        )
+        health_timer.start()
 
     app.aboutToQuit.connect(lambda: safe_cleanup(camera_widgets))
     QtGui.QShortcut(QtGui.QKeySequence('q'), mw,
