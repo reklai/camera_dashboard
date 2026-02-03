@@ -58,9 +58,9 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ============================================================
-# DYNAMIC PERFORMANCE TUNING
+# PERFORMANCE + RECOVERY TUNING
 # ------------------------------------------------------------
-# Controls how FPS adapts when CPU or temperature is high.
+# Controls FPS adaptation and stale-frame recovery behavior.
 # ============================================================
 DYNAMIC_FPS_ENABLED = True
 PERF_CHECK_INTERVAL_MS = 2000
@@ -72,6 +72,7 @@ CPU_TEMP_THRESHOLD_C = 70.0  # Celsius
 STRESS_HOLD_COUNT = 2       # consecutive checks before reducing fps
 RECOVER_HOLD_COUNT = 3      # consecutive checks before increasing fps
 
+# Stale frame detection + bounded auto-restart policy.
 STALE_FRAME_TIMEOUT_SEC = 1.5
 RESTART_COOLDOWN_SEC = 5.0
 MAX_RESTARTS_PER_WINDOW = 3
@@ -519,7 +520,7 @@ class CameraWidget(QtWidgets.QWidget):
         else:
             layout.addWidget(self.video_label)
 
-        # FPS counters for logging UI render performance.
+        # Render state, staleness tracking, and caches.
         self.frame_count = 0
         self.prev_time = time.time()
         self._latest_frame = None
@@ -568,7 +569,6 @@ class CameraWidget(QtWidgets.QWidget):
             self._render_placeholder(self.placeholder_text or "DISCONNECTED")
 
         # Timer to render latest frame at a stable UI FPS.
-        # This is intentionally decoupled from capture FPS.
         if not self.settings_mode:
             self.ui_render_fps = max(1, int(ui_fps))
             self.render_timer = QTimer(self)
@@ -579,7 +579,7 @@ class CameraWidget(QtWidgets.QWidget):
             self.ui_render_fps = 0
             self.render_timer = None
 
-        # Timer to print UI FPS diagnostics (only for real cameras)
+        # Optional UI FPS diagnostics (only for real cameras)
         if self.capture_enabled and not self.settings_mode and UI_FPS_LOGGING:
             self.ui_timer = QTimer(self)
             self.ui_timer.setInterval(1000)
@@ -588,6 +588,7 @@ class CameraWidget(QtWidgets.QWidget):
         else:
             self.ui_timer = None
 
+        # Periodic status logging for observability.
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(5000)
         self._status_timer.timeout.connect(self._log_status)
