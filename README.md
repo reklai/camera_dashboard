@@ -1,24 +1,12 @@
 # Camera Dashboard
 
-A multi-camera monitoring system optimized for Raspberry Pi, designed for blind-spot monitoring on cargo vehicles. Features real-time video streaming with GStreamer acceleration, dynamic performance tuning, hot-plug support, and an intuitive touch-enabled interface.
+A multi-camera monitoring system optimized for Raspberry Pi, designed for blind-spot monitoring on cargo vehicles. Features real-time video streaming with GStreamer acceleration, dynamic performance tuning, hot-plug support.
+
+## Note: Comprehensive Testing and Logging was done through OPENCODE
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi%20%7C%20Linux-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
-
-## Quick Start
-
-```bash
-# Clone and install
-git clone https://github.com/Reece-Reklai/camera_dashboard.git
-cd camera_dashboard
-chmod +x install.sh
-./install.sh
-
-# Run the application
-source .venv/bin/activate
-python3 main.py
-```
 
 ---
 
@@ -60,13 +48,13 @@ python3 main.py
 - **Raspberry Pi 4** (64-bit OS recommended)
 - **Linux** (Ubuntu 22.04+, Debian 12+)
 
-### Hardware
+### Hardware Tested Against
 
 - USB webcams compatible with V4L2 (MJPEG support recommended)
 - Minimum 2GB RAM (4GB+ recommended for 3 cameras)
 - Display with X11 or Wayland
 
-### Software Dependencies
+### Software Minimum Dependencies
 
 - Python 3.8+
 - PyQt6 (Qt6 GUI framework)
@@ -75,6 +63,20 @@ python3 main.py
 - GStreamer 1.0 (optional, for optimized capture)
 
 ---
+
+## Quick Start
+
+```bash
+# Clone and install
+git clone https://github.com/Reece-Reklai/camera_dashboard.git
+cd camera_dashboard
+chmod +x install.sh
+./install.sh
+
+# Run the application
+source .venv/bin/activate
+python3 main.py
+```
 
 ## Installation
 
@@ -183,7 +185,7 @@ sudo systemctl status camera-dashboard
 
 ---
 
-## Configuration
+## Configuration Settings
 
 ### Config File: `config.ini`
 
@@ -263,7 +265,7 @@ sudo systemctl disable camera-dashboard
 
 ---
 
-## Performance
+## Performance Metrics
 
 ### Raspberry Pi 5 Benchmarks
 
@@ -273,24 +275,9 @@ sudo systemctl disable camera-dashboard
 | 2       | 640x480    | 20          | 15     | ~25%      | ~180MB |
 | 3       | 640x480    | 20          | 15     | ~35%      | ~200MB |
 
-### Optimizations Applied
-
-- **GStreamer Pipeline**: More efficient MJPEG decoding than raw V4L2
-- **Render Overhead Compensation**: Timer adjusted to hit target FPS accurately
-- **Longer Rescan Interval**: 15s vs 5s reduces background CPU usage
-- **Frame Buffer Reuse**: Pre-allocated buffers avoid memory allocations
-- **BGR888 Direct Rendering**: No color conversion needed for Qt display
-
-### Dynamic FPS Behavior
-
-1. **Normal**: Maintains target FPS (20 capture, 15 UI)
-2. **High CPU (>75%)**: Gradually reduces FPS
-3. **High Temp (>70°C)**: Immediately reduces FPS
-4. **Recovery**: Gradually restores FPS when system stabilizes
-
 ---
 
-## Troubleshooting
+## Troubleshooting common issues
 
 ### Cameras Not Detected
 
@@ -316,7 +303,7 @@ gst-launch-1.0 v4l2src device=/dev/video0 ! jpegdec ! videoconvert ! autovideosi
 use_gstreamer = false
 ```
 
-### Application Crashes
+### Application Crashes / Unknown behavior, errors
 
 ```bash
 # Check logs
@@ -326,13 +313,6 @@ journalctl -u camera-dashboard --no-pager | tail -50
 # Run with debug output
 DEBUG_PRINTS=true python3 main.py
 ```
-
-### High CPU Usage
-
-1. Reduce `capture_fps` in config.ini (e.g., 15 instead of 20)
-2. Reduce `ui_fps` (e.g., 12 instead of 15)
-3. Enable `dynamic_fps = true`
-4. Check if GStreamer is active (look for "GStreamer" in logs)
 
 ---
 
