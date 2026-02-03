@@ -31,6 +31,7 @@ import signal
 import platform
 import os
 import re
+import numpy as np
 
 # ============================================================
 # DEBUG PRINTS (disabled by default)
@@ -470,6 +471,15 @@ class CameraWidget(QtWidgets.QWidget):
         self.frame_count = 0
         self.prev_time = time.time()
         self._latest_frame = None
+        self._last_placeholder_text = None
+        self._frame_id = 0
+        self._last_rendered_id = -1
+        self._last_rendered_size = None
+        self._pixmap_cache = QtGui.QPixmap()
+        self._scaled_pixmap_cache = None
+        self._scaled_pixmap_cache_size = None
+        self._night_gray = None
+        self._night_bgr = None
 
         # Base FPS is the desired target; current FPS is adjusted dynamically.
         self.base_target_fps = target_fps
@@ -509,7 +519,7 @@ class CameraWidget(QtWidgets.QWidget):
             self.render_timer = None
 
         # Timer to print UI FPS diagnostics (only for real cameras)
-        if self.capture_enabled and not self.settings_mode:
+        if self.capture_enabled and not self.settings_mode and UI_FPS_LOGGING:
             self.ui_timer = QTimer(self)
             self.ui_timer.setInterval(1000)
             self.ui_timer.timeout.connect(self._print_fps)
@@ -566,7 +576,7 @@ class CameraWidget(QtWidgets.QWidget):
         self.worker.status_changed.connect(self.on_status_changed)
         self.worker.start()
 
-        if self.ui_timer is None:
+        if self.ui_timer is None and UI_FPS_LOGGING:
             self.ui_timer = QTimer(self)
             self.ui_timer.setInterval(1000)
             self.ui_timer.timeout.connect(self._print_fps)
@@ -814,6 +824,7 @@ class CameraWidget(QtWidgets.QWidget):
                 return
             # Only store; UI thread renders on its timer.
             self._latest_frame = frame_bgr
+            self._frame_id += 1
         except Exception:
             logging.exception("on_frame")
 
@@ -821,12 +832,15 @@ class CameraWidget(QtWidgets.QWidget):
         """Render placeholder text when no frame is available."""
         if self.settings_mode:
             return
+        if text == self._last_placeholder_text and not self.swap_active:
+            return
         target_label = self._fs_overlay.label if (
             self.is_fullscreen and self._fs_overlay) else self.video_label
         target_label.setPixmap(QtGui.QPixmap())
         target_label.setText(text)
         target_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         target_label.setStyleSheet("color: #bbbbbb; font-size: 24px;")
+        self._last_placeholder_text = text
         if self.swap_active:
             self.setStyleSheet(self.swap_ready_style)
 
@@ -841,14 +855,37 @@ class CameraWidget(QtWidgets.QWidget):
                     self.placeholder_text or "DISCONNECTED")
                 return
 
+            if self.is_fullscreen and self._fs_overlay:
+                target_size = self._fs_overlay.size()
+            else:
+                target_size = self.video_label.size()
+
+            if (self._frame_id == self._last_rendered_id and
+                    self._last_rendered_size == target_size):
+                return
+
             if self.night_mode_enabled:
                 try:
                     if frame_bgr.ndim == 2:
-                        gray = cv2.convertScaleAbs(frame_bgr, alpha=1.6, beta=0)
+                        h, w = frame_bgr.shape
                     else:
-                        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-                        gray = cv2.convertScaleAbs(gray, alpha=1.6, beta=0)
-                    frame_bgr = cv2.merge((gray * 0, gray * 0, gray))
+                        h, w = frame_bgr.shape[:2]
+
+                    if self._night_gray is None or self._night_gray.shape != (h, w):
+                        self._night_gray = np.empty((h, w), dtype=frame_bgr.dtype)
+                    if self._night_bgr is None or self._night_bgr.shape[:2] != (h, w):
+                        self._night_bgr = np.empty((h, w, 3), dtype=frame_bgr.dtype)
+
+                    if frame_bgr.ndim == 2:
+                        cv2.convertScaleAbs(frame_bgr, alpha=1.6, beta=0, dst=self._night_gray)
+                    else:
+                        cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY, dst=self._night_gray)
+                        cv2.convertScaleAbs(self._night_gray, alpha=1.6, beta=0, dst=self._night_gray)
+
+                    self._night_bgr[:, :, 0].fill(0)
+                    self._night_bgr[:, :, 1].fill(0)
+                    self._night_bgr[:, :, 2] = self._night_gray
+                    frame_bgr = self._night_bgr
                 except Exception:
                     pass
 
@@ -868,24 +905,53 @@ class CameraWidget(QtWidgets.QWidget):
                     QtGui.QImage.Format.Format_BGR888
                 )
 
-            pix = QtGui.QPixmap.fromImage(img)
+            self._pixmap_cache.convertFromImage(img)
 
             # Fullscreen scales to screen size; grid uses label size.
             if self.is_fullscreen and self._fs_overlay:
-                target_size = self._fs_overlay.size()
                 if target_size.width() > 0 and target_size.height() > 0:
-                    pix = pix.scaled(
-                        target_size,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.FastTransformation
-                    )
-                self._fs_overlay.label.setPixmap(pix)
+                    if (self._scaled_pixmap_cache is None or
+                            self._scaled_pixmap_cache_size != target_size):
+                        self._scaled_pixmap_cache = QtGui.QPixmap(target_size)
+                        self._scaled_pixmap_cache_size = target_size
+                    self._scaled_pixmap_cache.fill(Qt.GlobalColor.black)
+                    scaled_size = self._pixmap_cache.size().scaled(
+                        target_size, Qt.AspectRatioMode.KeepAspectRatio)
+                    x = (target_size.width() - scaled_size.width()) // 2
+                    y = (target_size.height() - scaled_size.height()) // 2
+                    target_rect = QtCore.QRect(x, y, scaled_size.width(), scaled_size.height())
+                    painter = QtGui.QPainter(self._scaled_pixmap_cache)
+                    painter.drawPixmap(target_rect, self._pixmap_cache)
+                    painter.end()
+                    self._fs_overlay.label.setPixmap(self._scaled_pixmap_cache)
+                else:
+                    self._fs_overlay.label.setPixmap(self._pixmap_cache)
                 self._fs_overlay.label.setText("")
             else:
-                self.video_label.setPixmap(pix)
+                if (target_size.width() > 0 and target_size.height() > 0 and
+                        self._pixmap_cache.size() != target_size):
+                    if (self._scaled_pixmap_cache is None or
+                            self._scaled_pixmap_cache_size != target_size):
+                        self._scaled_pixmap_cache = QtGui.QPixmap(target_size)
+                        self._scaled_pixmap_cache_size = target_size
+                    self._scaled_pixmap_cache.fill(Qt.GlobalColor.black)
+                    scaled_size = self._pixmap_cache.size().scaled(
+                        target_size, Qt.AspectRatioMode.KeepAspectRatio)
+                    x = (target_size.width() - scaled_size.width()) // 2
+                    y = (target_size.height() - scaled_size.height()) // 2
+                    target_rect = QtCore.QRect(x, y, scaled_size.width(), scaled_size.height())
+                    painter = QtGui.QPainter(self._scaled_pixmap_cache)
+                    painter.drawPixmap(target_rect, self._pixmap_cache)
+                    painter.end()
+                    self.video_label.setPixmap(self._scaled_pixmap_cache)
+                else:
+                    self.video_label.setPixmap(self._pixmap_cache)
                 self.video_label.setText("")
 
-            self.frame_count += 1
+            self._last_rendered_id = self._frame_id
+            self._last_rendered_size = target_size
+            if UI_FPS_LOGGING:
+                self.frame_count += 1
         except Exception:
             logging.exception("render frame")
 
