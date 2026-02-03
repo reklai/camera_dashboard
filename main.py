@@ -804,17 +804,20 @@ class FullscreenOverlay(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
 
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, a0: QtGui.QMouseEvent | None) -> None:
         """Exit fullscreen on left click/tap."""
-        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+        if a0 is not None and a0.button() == QtCore.Qt.MouseButton.LeftButton:
             self.on_click_exit()
-        super().mousePressEvent(event)
+        super().mousePressEvent(a0)
 
-    def event(self, event):
-        if event.type() in (QtCore.QEvent.Type.TouchBegin, QtCore.QEvent.Type.TouchEnd):
+    def event(self, a0: QtCore.QEvent | None) -> bool:
+        if a0 is not None and a0.type() in (
+            QtCore.QEvent.Type.TouchBegin,
+            QtCore.QEvent.Type.TouchEnd,
+        ):
             self.on_click_exit()
             return True
-        return super().event(event)
+        return super().event(a0)
 
 
 # ============================================================
@@ -832,7 +835,7 @@ class CameraWidget(QtWidgets.QWidget):
         self,
         width,
         height,
-        stream_link=0,
+        stream_link: int | None = 0,
         aspect_ratio=False,
         parent=None,
         buffer_size=1,
@@ -1079,21 +1082,21 @@ class CameraWidget(QtWidgets.QWidget):
         self._render_placeholder("CONNECTING...")
         logging.info("Attached camera %s to widget %s", stream_link, self.widget_id)
 
-    def eventFilter(self, obj, event):
+    def eventFilter(self, a0: QtCore.QObject | None, a1: QtCore.QEvent | None) -> bool:
         """Handle touch and mouse events from widget or label."""
-        if obj not in (self, self.video_label):
-            return super().eventFilter(obj, event)
+        if a0 not in (self, self.video_label) or a1 is None:
+            return super().eventFilter(a0, a1)
 
-        if event.type() == QtCore.QEvent.Type.TouchBegin:
-            return self._on_touch_begin(event)
-        if event.type() == QtCore.QEvent.Type.TouchEnd:
-            return self._on_touch_end(event)
+        if a1.type() == QtCore.QEvent.Type.TouchBegin:
+            return self._on_touch_begin(a1)
+        if a1.type() == QtCore.QEvent.Type.TouchEnd:
+            return self._on_touch_end(a1)
 
-        if event.type() == QtCore.QEvent.Type.MouseButtonPress:
-            return self._on_mouse_press(event)
-        if event.type() == QtCore.QEvent.Type.MouseButtonRelease:
-            return self._on_mouse_release(event)
-        return super().eventFilter(obj, event)
+        if a1.type() == QtCore.QEvent.Type.MouseButtonPress:
+            return self._on_mouse_press(a1)
+        if a1.type() == QtCore.QEvent.Type.MouseButtonRelease:
+            return self._on_mouse_release(a1)
+        return super().eventFilter(a0, a1)
 
     def _on_touch_begin(self, event):
         """Record touch-down timestamp and source widget."""
@@ -1141,31 +1144,28 @@ class CameraWidget(QtWidgets.QWidget):
                 self.toggle_fullscreen()
                 return True
 
-            if swap_parent.selected_camera == self:
+            selected = getattr(swap_parent, "selected_camera", None)
+            if selected == self:
                 logging.debug("Clear swap %s", self.widget_id)
-                swap_parent.selected_camera = None
+                setattr(swap_parent, "selected_camera", None)
                 self.swap_active = False
                 self.reset_style()
                 self._reset_mouse_state()
                 return True
 
-            if (
-                swap_parent.selected_camera
-                and swap_parent.selected_camera != self
-                and not self.is_fullscreen
-            ):
-                other = swap_parent.selected_camera
+            if selected and selected != self and not self.is_fullscreen:
+                other = selected
                 logging.debug("SWAP %s <-> %s", other.widget_id, self.widget_id)
                 self.do_swap(other, self, swap_parent)
                 other.swap_active = False
                 other.reset_style()
-                swap_parent.selected_camera = None
+                setattr(swap_parent, "selected_camera", None)
                 self._reset_mouse_state()
                 return True
 
             if hold_time >= self.hold_threshold_ms and not self.is_fullscreen:
                 logging.debug("ENTER swap %s", self.widget_id)
-                swap_parent.selected_camera = self
+                setattr(swap_parent, "selected_camera", self)
                 self.swap_active = True
                 self.setStyleSheet(self.swap_ready_style)
                 self._reset_mouse_state()
@@ -1213,31 +1213,28 @@ class CameraWidget(QtWidgets.QWidget):
                 self.toggle_fullscreen()
                 return True
 
-            if swap_parent.selected_camera == self:
+            selected = getattr(swap_parent, "selected_camera", None)
+            if selected == self:
                 logging.debug("Clear swap %s", self.widget_id)
-                swap_parent.selected_camera = None
+                setattr(swap_parent, "selected_camera", None)
                 self.swap_active = False
                 self.reset_style()
                 self._reset_mouse_state()
                 return True
 
-            if (
-                swap_parent.selected_camera
-                and swap_parent.selected_camera != self
-                and not self.is_fullscreen
-            ):
-                other = swap_parent.selected_camera
+            if selected and selected != self and not self.is_fullscreen:
+                other = selected
                 logging.debug("SWAP %s <-> %s", other.widget_id, self.widget_id)
                 self.do_swap(other, self, swap_parent)
                 other.swap_active = False
                 other.reset_style()
-                swap_parent.selected_camera = None
+                setattr(swap_parent, "selected_camera", None)
                 self._reset_mouse_state()
                 return True
 
             if hold_time >= self.hold_threshold_ms and not self.is_fullscreen:
                 logging.debug("ENTER swap %s", self.widget_id)
-                swap_parent.selected_camera = self
+                setattr(swap_parent, "selected_camera", self)
                 self.swap_active = True
                 self.setStyleSheet(self.swap_ready_style)
                 self._reset_mouse_state()
@@ -1289,6 +1286,9 @@ class CameraWidget(QtWidgets.QWidget):
         if self.is_fullscreen:
             return
         self._ensure_fullscreen_overlay()
+
+        if self._fs_overlay is None:
+            return
 
         screen = QtWidgets.QApplication.primaryScreen()
         if screen:
@@ -1405,20 +1405,21 @@ class CameraWidget(QtWidgets.QWidget):
 
             # Convert numpy frame to Qt image, handling grayscale or BGR.
             if frame_bgr.ndim == 2:
-                h, w = frame_bgr.shape
+                h, w = frame_bgr.shape[:2]
                 bytes_per_line = w
                 img = QtGui.QImage(
-                    frame_bgr.data,
+                    bytes(frame_bgr.data),
                     w,
                     h,
                     bytes_per_line,
                     QtGui.QImage.Format.Format_Grayscale8,
                 )
             else:
-                h, w, ch = frame_bgr.shape
+                h, w = frame_bgr.shape[:2]
+                ch = frame_bgr.shape[2] if frame_bgr.ndim > 2 else 1
                 bytes_per_line = ch * w
                 img = QtGui.QImage(
-                    frame_bgr.data,
+                    bytes(frame_bgr.data),
                     w,
                     h,
                     bytes_per_line,
@@ -1587,9 +1588,10 @@ class CameraWidget(QtWidgets.QWidget):
             return
         self._last_status_log_ts = now
         format_fourcc = "unknown"
-        if self.worker and getattr(self.worker, "_cap", None):
+        cap = getattr(self.worker, "_cap", None) if self.worker else None
+        if cap is not None:
             try:
-                raw = int(self.worker._cap.get(cv2.CAP_PROP_FOURCC))
+                raw = int(cap.get(cv2.CAP_PROP_FOURCC))
                 format_fourcc = "".join(
                     [chr((raw >> (8 * i)) & 0xFF) for i in range(4)]
                 )
@@ -1910,7 +1912,7 @@ def main():
     mw = QtWidgets.QMainWindow()
     mw.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint)
     central_widget = QtWidgets.QWidget()
-    central_widget.selected_camera = None
+    setattr(central_widget, "selected_camera", None)
     mw.setCentralWidget(central_widget)
 
     # Show first, then fullscreen (avoids race conditions)
@@ -1924,7 +1926,12 @@ def main():
     QtCore.QTimer.singleShot(50, force_fullscreen)
     QtCore.QTimer.singleShot(300, force_fullscreen)
 
-    screen = app.primaryScreen().availableGeometry()
+    primary_screen = app.primaryScreen()
+    screen = (
+        primary_screen.availableGeometry()
+        if primary_screen
+        else QtCore.QRect(0, 0, 1920, 1080)
+    )
     working_cameras = find_working_cameras()
     logging.info("Found %d cameras", len(working_cameras))
 
