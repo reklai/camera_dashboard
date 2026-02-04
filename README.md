@@ -2,7 +2,7 @@
 
 A multi-camera monitoring system optimized for Raspberry Pi, designed for blind-spot monitoring on cargo vehicles. Features real-time video streaming with GStreamer acceleration, dynamic performance tuning, hot-plug support.
 
-### Note: Comprehensive Logging, Modular Structure Design and Performance Enchancement Proposals was done through OPENCODE
+### Note: Comprehensive Logging, Modular Structure Design and Performance Optimization was done through OPENCODE
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi%20%7C%20Linux-lightgrey.svg)
