@@ -1,9 +1,20 @@
-# For Raspberry Pi, use system packages instead:
+# Camera Dashboard Dependencies
+# 
+# For Raspberry Pi, use system packages instead (recommended):
 #   sudo apt install python3-pyqt6 python3-opencv python3-pyudev python3-numpy
 # Then create venv with: python3 -m venv --system-site-packages .venv
 #
-# For other systems, these pip packages can be installed:
-PyQt6>=6.4.0
-opencv-python>=4.6.0
-pyudev>=0.24.0
-numpy>=1.20.0
+# For other systems, install these pinned versions:
+
+# Core dependencies (pinned for reproducibility)
+PyQt6==6.4.2
+PyQt6-sip==13.4.1
+opencv-python==4.6.0
+pyudev==0.24.0
+numpy==1.24.2
+
+# Minimum versions (for reference if exact versions unavailable):
+# PyQt6>=6.4.0
+# opencv-python>=4.6.0
+# pyudev>=0.24.0
+# numpy>=1.20.0
