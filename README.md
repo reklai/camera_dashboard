@@ -268,9 +268,7 @@ sudo systemctl disable camera-dashboard
 
 ## Testing
 
-The project includes a comprehensive test suite using pytest.
-
-### Running Tests
+### Running Tests through pytest
 
 ```bash
 # Run all tests
