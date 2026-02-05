@@ -583,9 +583,10 @@ class CameraWidget(QtWidgets.QWidget):
         try:
             if frame_bgr is None:
                 return
-            # Return previous frame to pool BEFORE updating _latest_frame
-            # to avoid race condition where render timer could access frame
-            # while it's being returned to the pool
+            # Return previous frame to pool before updating _latest_frame.
+            # Note: Both on_frame (signal/slot) and _render_latest_frame (timer)
+            # run on the main thread via Qt's event loop, so no actual race exists.
+            # We return before updating as a defensive pattern for clarity.
             previous_frame = self._latest_frame
             if previous_frame is not None and self.worker is not None:
                 try:
