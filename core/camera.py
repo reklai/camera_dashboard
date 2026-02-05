@@ -140,6 +140,58 @@ class CaptureWorker(QThread):
             cap = None
             backend_name = "V4L2"
 
+            def _try_v4l2_open(forced_fourcc: Optional[str]) -> Optional[cv2.VideoCapture]:
+                backend = cv2.CAP_ANY
+                if platform.system() == "Linux":
+                    backend = cv2.CAP_V4L2
+                local_cap = cv2.VideoCapture(self.stream_link, backend)
+                if not local_cap or not local_cap.isOpened():
+                    try:
+                        local_cap.release()
+                    except Exception:
+                        pass
+                    return None
+                if forced_fourcc:
+                    try:
+                        local_cap.set(
+                            cv2.CAP_PROP_FOURCC,
+                            cv2.VideoWriter_fourcc(
+                                forced_fourcc[0],
+                                forced_fourcc[1],
+                                forced_fourcc[2],
+                                forced_fourcc[3],
+                            ),
+                        )
+                    except Exception:
+                        pass
+                if self.capture_width:
+                    local_cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.capture_width))
+                if self.capture_height:
+                    local_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.capture_height))
+                try:
+                    local_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+                try:
+                    local_cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 2000)
+                    local_cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 2000)
+                except Exception:
+                    pass
+                try:
+                    if self._target_fps and self._target_fps > 0:
+                        local_cap.set(cv2.CAP_PROP_FPS, float(self._target_fps))
+                    else:
+                        local_cap.set(cv2.CAP_PROP_FPS, 0)
+                except Exception:
+                    pass
+                if not local_cap.grab():
+                    try:
+                        local_cap.release()
+                    except Exception:
+                        pass
+                    return None
+                return local_cap
+
             # Try GStreamer first if enabled (more efficient MJPEG pipeline)
             if (
                 config.USE_GSTREAMER
@@ -173,7 +225,7 @@ class CaptureWorker(QThread):
                             cap.release()
                             cap = None
                     else:
-                        if cap:
+                        if cap is not None:
                             cap.release()
                         cap = None
                 except Exception as e:
@@ -189,10 +241,14 @@ class CaptureWorker(QThread):
                         "Camera %s: GStreamer unavailable, falling back to V4L2",
                         self.stream_link,
                     )
-                backend = cv2.CAP_ANY
-                if platform.system() == "Linux":
-                    backend = cv2.CAP_V4L2
-                cap = cv2.VideoCapture(self.stream_link, backend)
+                logging.info("Camera %s: trying V4L2 MJPG", self.stream_link)
+                cap = _try_v4l2_open("MJPG")
+                if cap is None:
+                    logging.info("Camera %s: trying V4L2 YUYV", self.stream_link)
+                    cap = _try_v4l2_open("YUYV")
+                if cap is None:
+                    logging.info("Camera %s: trying V4L2 auto", self.stream_link)
+                    cap = _try_v4l2_open(None)
                 backend_name = "V4L2"
 
             if not cap or not cap.isOpened():
@@ -201,55 +257,24 @@ class CaptureWorker(QThread):
                     self.stream_link,
                 )
                 try:
-                    cap.release()
+                    if cap is not None:
+                        cap.release()
                 except Exception:
                     pass
                 return
 
+            assert cap is not None
+
             # Only apply these settings for V4L2 backend (not needed for GStreamer)
             if backend_name == "V4L2":
-                # Request MJPEG if available to reduce decode overhead.
-                try:
-                    cap.set(
-                        cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc("M", "J", "P", "G")
-                    )
-                except Exception:
-                    pass
-
-                # Apply capture resolution when requested.
-                if self.capture_width:
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.capture_width))
-                if self.capture_height:
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.capture_height))
-
-                # Reduce internal buffering to keep frames current.
-                try:
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                except Exception:
-                    pass
-
-                # Try to prevent blocking reads on flaky cameras.
-                try:
-                    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 2000)
-                    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 2000)
-                except Exception:
-                    pass
-
-                # Request FPS; 0 may let camera choose.
-                try:
-                    if self._target_fps and self._target_fps > 0:
-                        cap.set(cv2.CAP_PROP_FPS, float(self._target_fps))
-                    else:
-                        cap.set(cv2.CAP_PROP_FPS, 0)
-                except Exception:
-                    pass
+                pass
 
             if cap.isOpened():
                 self._cap = cap
                 self._using_gstreamer = backend_name == "GStreamer"
                 self._configure_fps_from_camera()
                 try:
-                    raw = int(self._cap.get(cv2.CAP_PROP_FOURCC))
+                    raw = int(cap.get(cv2.CAP_PROP_FOURCC))
                     fourcc = "".join([chr((raw >> (8 * i)) & 0xFF) for i in range(4)])
                     if fourcc.strip() and fourcc != "MJPG":
                         logging.info(
@@ -258,9 +283,9 @@ class CaptureWorker(QThread):
                 except Exception:
                     pass
                 try:
-                    actual_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    actual_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    actual_fps = float(self._cap.get(cv2.CAP_PROP_FPS))
+                    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    actual_fps = float(cap.get(cv2.CAP_PROP_FPS))
                     logging.info(
                         "Camera %s format %dx%d @ %.1f FPS (%s)",
                         self.stream_link,
