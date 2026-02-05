@@ -32,6 +32,13 @@ if ! python3 -c "import pytest" 2>/dev/null; then
     pip install --quiet pytest pytest-qt
 fi
 
+# ---------- Verify core imports ----------
+
+if ! python3 -c "from PyQt6 import QtCore, QtWidgets; from PyQt6.QtOpenGL import QOpenGLWidget; import cv2" 2>/dev/null; then
+    echo "Warning: Some core imports failed. Tests may not run correctly."
+    echo "Ensure PyQt6, PyQt6-OpenGL, and OpenCV are installed."
+fi
+
 # ---------- Run tests ----------
 
 echo "Running tests..."
