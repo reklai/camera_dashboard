@@ -27,7 +27,8 @@ A multi-camera monitoring system optimized for Raspberry Pi, designed for blind-
 
 ### Performance Optimization
 
-- **GStreamer Pipeline**: Hardware-accelerated MJPEG decoding (with V4L2 fallback)
+- **OpenGL Rendering**: GPU-accelerated frame compositing (default, reduces CPU usage)
+- **GStreamer Pipeline**: Hardware-accelerated MJPEG decoding with jpegdec (with V4L2 fallback)
 - **Dynamic FPS Adjustment**: Automatically reduces frame rate under CPU/thermal stress
 - **Threaded Architecture**: Separate capture threads ensure smooth UI performance
 - **Efficient Rendering**: 15 FPS UI refresh rate balances smoothness and CPU usage
@@ -58,9 +59,10 @@ A multi-camera monitoring system optimized for Raspberry Pi, designed for blind-
 
 - Python 3.8+
 - PyQt6 (Qt6 GUI framework)
+- PyQt6-OpenGL (GPU-accelerated rendering)
 - OpenCV (with GStreamer support)
 - pyudev (USB device detection)
-- GStreamer 1.0 (optional, for optimized capture)
+- GStreamer 1.0 (for optimized capture with jpegdec)
 - pytest, pytest-qt (for running tests)
 
 ---
@@ -91,7 +93,7 @@ chmod +x install.sh
 The installer will:
 
 1. Update system packages
-2. Install system dependencies (PyQt6, OpenCV, GStreamer)
+2. Install system dependencies (PyQt6, PyQt6-OpenGL, OpenCV, GStreamer)
 3. Create a Python virtual environment with system-site-packages
 4. Configure camera permissions (adds user to `video` group)
 5. Install and enable the systemd service
@@ -112,11 +114,11 @@ sudo apt update && sudo apt upgrade -y
 ```bash
 sudo apt install -y \
   python3 python3-pip python3-venv \
-  python3-pyqt6 python3-opencv python3-pyudev python3-numpy \
+  python3-pyqt6 python3-pyqt6.qtopengl python3-opencv python3-pyudev python3-numpy \
   libgl1 libegl1 libxkbcommon0 libxkbcommon-x11-0 \
   libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
   libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0 \
-  libqt6gui6 libqt6widgets6 v4l-utils \
+  libqt6gui6 libqt6widgets6 libqt6opengl6 v4l-utils \
   gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
 ```
 
@@ -212,6 +214,7 @@ failed_camera_cooldown_sec = 30.0     # Retry delay for failed cameras
 slot_count = 3                        # Number of camera slots
 kill_device_holders = true            # Kill processes blocking cameras
 use_gstreamer = true                  # Use GStreamer for capture (faster)
+use_opengl = true                     # Use OpenGL for GPU rendering (default)
 
 [profile]
 capture_width = 640
@@ -294,8 +297,8 @@ sudo systemctl disable camera-dashboard
 | `test_config.py` | 20 | Config parsing, validation, defaults |
 | `test_camera.py` | 13 | Camera discovery, capture worker, GStreamer |
 | `test_widgets.py` | 18 | Widget lifecycle, fullscreen, night mode |
-| `test_helpers.py` | 19 | Utility functions, systemd, process management |
-| **Total** | **70** | |
+| `test_helpers.py` | 21 | Utility functions, systemd, process management |
+| **Total** | **72** | |
 
 ### Manual Test Run
 
@@ -349,6 +352,19 @@ gst-launch-1.0 v4l2src device=/dev/video0 ! jpegdec ! videoconvert ! autovideosi
 
 # Disable GStreamer in config.ini
 use_gstreamer = false
+```
+
+### OpenGL Issues
+
+```bash
+# Check OpenGL support
+glxinfo | grep "OpenGL"
+
+# If OpenGL causes issues, disable it in config.ini
+use_opengl = false
+
+# Verify PyQt6 OpenGL is installed
+python3 -c "from PyQt6.QtOpenGL import QOpenGLWidget; print('OpenGL OK')"
 ```
 
 ### Application Crashes / Unknown behavior, errors
