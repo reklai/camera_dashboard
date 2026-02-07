@@ -92,6 +92,7 @@ class CaptureWorker(QThread):
         self._fourcc: str = "unknown"
         # Lock protects changes to FPS/emit interval from other threads.
         self._fps_lock = threading.Lock()
+        self._stop_event = threading.Event()
         
         # Pre-allocated frame pool to reduce memory allocations/GC pressure
         self._frame_pool: deque[NDArray[np.uint8]] = deque(maxlen=self.FRAME_POOL_SIZE)
@@ -133,6 +134,8 @@ class CaptureWorker(QThread):
 
     def run(self) -> None:
         """Capture loop: open camera, grab frames, emit, reconnect on failure."""
+        self._start_ts = time.time()
+        self._stop_event.clear()
         logging.info("Camera %s thread started", self.stream_link)
         while self._running:
             try:
@@ -150,7 +153,7 @@ class CaptureWorker(QThread):
                         if self._online:
                             self._online = False
                             self.status_changed.emit(False)
-                        time.sleep(self._reconnect_backoff)
+                        self._stop_event.wait(timeout=self._reconnect_backoff)
                         self._reconnect_backoff = min(
                             self._reconnect_backoff * 1.5, 10.0
                         )
@@ -446,6 +449,7 @@ class CaptureWorker(QThread):
         If the thread doesn't stop gracefully, we terminate it forcefully.
         """
         self._running = False
+        self._stop_event.set()
         
         # Wait for thread to finish (includes cleanup in run())
         if not self.wait(2000):

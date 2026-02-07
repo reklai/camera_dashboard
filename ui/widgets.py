@@ -190,6 +190,7 @@ class CameraWidget(QtWidgets.QWidget):
         self.prev_time = time.time()
         self._latest_frame = None
         self._last_placeholder_text = None
+        self._last_placeholder_fullscreen = None
         self._frame_id = 0
         self._last_rendered_id = -1
         self._last_rendered_size = None
@@ -303,6 +304,10 @@ class CameraWidget(QtWidgets.QWidget):
         if self.capture_enabled and self.worker:
             return
 
+        self._restart_events.clear()
+        self._restart_limit_logged = False
+        self._last_restart_ts = 0.0
+
         self.capture_enabled = True
         self.camera_stream_link = stream_link
         self.base_target_fps = target_fps
@@ -385,6 +390,10 @@ class CameraWidget(QtWidgets.QWidget):
         """
         try:
             if not self._press_widget_id or self._press_widget_id != self.widget_id:
+                return True
+
+            if self.settings_mode:
+                self._reset_mouse_state()
                 return True
 
             hold_time = (time.time() * 1000.0) - self._press_time
@@ -582,7 +591,11 @@ class CameraWidget(QtWidgets.QWidget):
         """Render placeholder text when no frame is available."""
         if self.settings_mode:
             return
-        if text == self._last_placeholder_text and not self.swap_active:
+        if (
+            text == self._last_placeholder_text
+            and not self.swap_active
+            and self.is_fullscreen == self._last_placeholder_fullscreen
+        ):
             return
         target_label = (
             self._fs_overlay.label
@@ -594,6 +607,7 @@ class CameraWidget(QtWidgets.QWidget):
         target_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         target_label.setStyleSheet("color: #bbbbbb; font-size: 24px;")
         self._last_placeholder_text = text
+        self._last_placeholder_fullscreen = self.is_fullscreen
         if self.swap_active:
             self.setStyleSheet(self.swap_ready_style)
 
@@ -742,6 +756,7 @@ class CameraWidget(QtWidgets.QWidget):
             self._last_rendered_id = self._frame_id
             self._last_rendered_size = target_size
             self._last_placeholder_text = None
+            self._last_placeholder_fullscreen = None
             if config.UI_FPS_LOGGING:
                 self.frame_count += 1
         except Exception:
@@ -925,8 +940,40 @@ class CameraWidget(QtWidgets.QWidget):
     def cleanup(self) -> None:
         """Stop the capture worker thread cleanly."""
         try:
-            if hasattr(self, "worker") and self.worker:
-                self.worker.stop()
+            if self.render_timer is not None and self.render_timer.isActive():
+                self.render_timer.stop()
+            if self.ui_timer is not None and self.ui_timer.isActive():
+                self.ui_timer.stop()
+            if self._status_timer is not None and self._status_timer.isActive():
+                self._status_timer.stop()
+
+            worker = self.worker if hasattr(self, "worker") else None
+            if worker:
+                try:
+                    worker.frame_ready.disconnect(self.on_frame)
+                except Exception:
+                    pass
+                try:
+                    worker.status_changed.disconnect(self.on_status_changed)
+                except Exception:
+                    pass
+                try:
+                    worker.stop()
+                except Exception:
+                    logging.debug("Error stopping worker during cleanup", exc_info=True)
+                self._release_current_frame(worker)
+                self._dispose_worker(worker)
+                self.worker = None
+
+            if self._fs_overlay is not None:
+                try:
+                    self._fs_overlay.hide()
+                    self._fs_overlay.setParent(None)
+                    self._fs_overlay.deleteLater()
+                except Exception:
+                    pass
+                self._fs_overlay = None
+                self.is_fullscreen = False
         except Exception:
             pass
 

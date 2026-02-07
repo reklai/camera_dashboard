@@ -345,15 +345,18 @@ def configure_logging() -> None:
 
     if LOG_FILE:
         log_dir = os.path.dirname(LOG_FILE)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
-        file_handler = RotatingFileHandler(
-            LOG_FILE,
-            maxBytes=LOG_MAX_BYTES,
-            backupCount=LOG_BACKUP_COUNT,
-        )
-        file_handler.setFormatter(formatter)
-        root.addHandler(file_handler)
+        try:
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+            file_handler = RotatingFileHandler(
+                LOG_FILE,
+                maxBytes=LOG_MAX_BYTES,
+                backupCount=LOG_BACKUP_COUNT,
+            )
+            file_handler.setFormatter(formatter)
+            root.addHandler(file_handler)
+        except OSError as exc:
+            logging.warning("Failed to configure file logging: %s", exc)
 
     if LOG_TO_STDOUT:
         stream_handler = logging.StreamHandler(sys.stdout)

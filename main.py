@@ -13,6 +13,8 @@ import os
 import signal
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import QTimer
@@ -197,8 +199,21 @@ def main() -> None:
     for c in range(cols):
         layout.setColumnStretch(c, 1)
 
+    perf_timer = None
+    health_timer = None
+
+    def ensure_perf_timer() -> None:
+        nonlocal perf_timer
+        if perf_timer is None:
+            perf_timer = QTimer(mw)
+            perf_timer.setInterval(config.PERF_CHECK_INTERVAL_MS)
+            perf_timer.timeout.connect(adjust_fps)
+            perf_timer.start()
+        elif not perf_timer.isActive():
+            perf_timer.start()
+
     # Dynamic FPS adjustment based on system stress
-    if config.DYNAMIC_FPS_ENABLED and camera_widgets:
+    if config.DYNAMIC_FPS_ENABLED:
         stress_counter = {"stress": 0, "recover": 0}
 
         def adjust_fps():
@@ -253,13 +268,64 @@ def main() -> None:
                 if fps_restored:
                     logging.info("System stable. Restoring FPS.")
 
-        perf_timer = QTimer(mw)
-        perf_timer.setInterval(config.PERF_CHECK_INTERVAL_MS)
-        perf_timer.timeout.connect(adjust_fps)
-        perf_timer.start()
+        if camera_widgets:
+            ensure_perf_timer()
 
     # Background rescan to attach new cameras to empty slots
     rescan_timer = None
+    rescan_executor = ThreadPoolExecutor(max_workers=1)
+    rescan_inflight = {"active": False}
+    shutdown_state = {"active": False}
+
+    def stop_timers() -> None:
+        shutdown_state["active"] = True
+        if perf_timer is not None and perf_timer.isActive():
+            perf_timer.stop()
+        if rescan_timer is not None and rescan_timer.isActive():
+            rescan_timer.stop()
+        if health_timer is not None and health_timer.isActive():
+            health_timer.stop()
+        try:
+            rescan_executor.shutdown(wait=False)
+        except Exception:
+            pass
+
+    def _apply_rescan_results(results: list[tuple[int, Optional[int]]]) -> None:
+        rescan_inflight["active"] = False
+        if shutdown_state["active"]:
+            return
+        now = time.time()
+        for idx, ok in results:
+            if not placeholder_slots:
+                break
+            if ok is not None:
+                slot = placeholder_slots.pop(0)
+                active_count = min(
+                    config.CAMERA_SLOT_COUNT, len(camera_widgets) + 1
+                )
+                cap_w, cap_h, cap_fps, ui_fps = config.choose_profile(active_count)
+                slot.attach_camera(ok, cap_fps, (cap_w, cap_h), ui_fps=ui_fps)
+                slot.set_night_mode(night_mode_state["enabled"])
+                camera_widgets.append(slot)
+                active_indexes.add(ok)
+                failed_indexes.pop(ok, None)
+                logging.info("Attached camera %d to empty slot", ok)
+                if config.DYNAMIC_FPS_ENABLED:
+                    ensure_perf_timer()
+            else:
+                failed_indexes[idx] = now
+
+    def _run_rescan_tests(candidates: list[int]) -> list[tuple[int, Optional[int]]]:
+        results: list[tuple[int, Optional[int]]] = []
+        for idx in candidates:
+            ok = test_single_camera(
+                idx,
+                retries=2,
+                retry_delay=0.15,
+                allow_kill=False,
+            )
+            results.append((idx, ok))
+        return results
 
     def rescan_and_attach():
         """Scan for new cameras and attach them to placeholders."""
@@ -317,27 +383,21 @@ def main() -> None:
 
         if not candidates:
             return
+        if rescan_inflight["active"]:
+            return
 
-        for idx in candidates:
-            if not placeholder_slots:
-                break
+        rescan_inflight["active"] = True
+        future = rescan_executor.submit(_run_rescan_tests, candidates)
 
-            ok = test_single_camera(
-                idx,
-                retries=2,
-                retry_delay=0.15,
-                allow_kill=False,
-            )
-            if ok is not None:
-                slot = placeholder_slots.pop(0)
-                slot.attach_camera(ok, cap_fps, (cap_w, cap_h), ui_fps=ui_fps)
-                slot.set_night_mode(night_mode_state["enabled"])
-                camera_widgets.append(slot)
-                active_indexes.add(ok)
-                failed_indexes.pop(ok, None)
-                logging.info("Attached camera %d to empty slot", ok)
-            else:
-                failed_indexes[idx] = now
+        def _on_rescan_done(fut) -> None:
+            try:
+                results = fut.result()
+            except Exception:
+                logging.exception("Rescan worker failed")
+                results = []
+            QtCore.QTimer.singleShot(0, lambda: _apply_rescan_results(results))
+
+        future.add_done_callback(_on_rescan_done)
 
     rescan_timer = QTimer(mw)
     rescan_timer.setInterval(config.RESCAN_INTERVAL_MS)
@@ -358,9 +418,10 @@ def main() -> None:
         )
         health_timer.start()
 
-    app.aboutToQuit.connect(lambda: safe_cleanup(camera_widgets, cleaned_flag))
+    app.aboutToQuit.connect(lambda: (stop_timers(), safe_cleanup(camera_widgets, cleaned_flag)))
 
     def quit_handler() -> None:
+        stop_timers()
         safe_cleanup(camera_widgets, cleaned_flag)
         app.quit()
 
