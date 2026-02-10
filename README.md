@@ -34,7 +34,9 @@ A multi-camera monitoring system optimized for Raspberry Pi, designed for blind-
 
 ### System Integration
 
-- **Desktop Shortcut**: Click to launch from desktop
+- **Auto-Start on Boot**: Systemd user service launches the app automatically when the Pi powers on
+- **Auto-Restart**: If the app crashes or is accidentally closed, systemd restarts it within 5 seconds
+- **Desktop Shortcut**: Manual launch fallback from desktop
 - **Zero Configuration**: Works out of the box with standard USB cameras
 - **Robust Recovery**: Automatic camera reconnection with exponential backoff
 
@@ -94,6 +96,8 @@ The installer will:
 3. Create a Python virtual environment with system-site-packages
 4. Configure camera permissions (adds user to `video` group)
 5. Create a desktop shortcut for easy launching
+6. Install a systemd user service for auto-start on boot
+7. Enable user linger so the service starts without manual login
 
 ### Manual Installation
 
@@ -146,10 +150,39 @@ mkdir -p logs
 
 ## Usage
 
-### Running the Application
+### Auto-Start (Default)
+
+After running `install.sh`, the app launches automatically on boot. No interaction required -- just power on the Pi.
+
+The systemd service will also auto-restart the app if it crashes or is accidentally closed.
+
+### Managing the Service
 
 ```bash
-# Manual run from terminal
+# Check status
+systemctl --user status camera-dashboard
+
+# Stop the app
+systemctl --user stop camera-dashboard
+
+# Start the app
+systemctl --user start camera-dashboard
+
+# Restart the app
+systemctl --user restart camera-dashboard
+
+# View live service logs
+journalctl --user -u camera-dashboard -f
+
+# Disable auto-start on boot
+systemctl --user disable camera-dashboard
+```
+
+### Running Manually
+
+```bash
+# Manual run from terminal (stop the service first)
+systemctl --user stop camera-dashboard
 source .venv/bin/activate
 python3 main.py
 
@@ -331,8 +364,25 @@ use_gstreamer = false
 # Check logs
 cat logs/camera_dashboard.log | tail -50
 
+# Check systemd service logs
+journalctl --user -u camera-dashboard --since "10 minutes ago" --no-pager
+
 # Run with debug logging level
 # Edit config.ini and set: level = DEBUG
+```
+
+### Service Not Starting on Boot
+
+```bash
+# Verify service is enabled
+systemctl --user is-enabled camera-dashboard
+
+# Check if user linger is active
+loginctl show-user $(whoami) -p Linger
+
+# Re-enable if needed
+systemctl --user enable camera-dashboard
+sudo loginctl enable-linger $(whoami)
 ```
 
 ---

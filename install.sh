@@ -155,9 +155,69 @@ chmod +x "$DESKTOP_FILE"
 echo "Desktop shortcut created: $DESKTOP_FILE"
 echo "Double-click the icon on your desktop to launch the app."
 
-# ---------- 8) quick test ----------
+# ---------- 8) install systemd service (auto-start on boot) ----------
 
-echo_section "8) Quick test"
+echo_section "8) Setting up auto-start on boot (systemd user service)"
+
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+SERVICE_FILE="$SYSTEMD_USER_DIR/camera-dashboard.service"
+
+mkdir -p "$SYSTEMD_USER_DIR"
+
+# Get the user's UID for XDG_RUNTIME_DIR
+USER_UID="$(id -u)"
+
+cat > "$SERVICE_FILE" <<SVCEOF
+[Unit]
+Description=Camera Dashboard - Multi-camera monitoring for blind-spot detection
+After=default.target
+Wants=default.target
+# Limit restart attempts: 5 restarts within 60 seconds, then give up
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=$SCRIPT_DIR
+ExecStart=$SCRIPT_DIR/.venv/bin/python3 $SCRIPT_DIR/main.py
+# Display access (Wayland + XWayland fallback)
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/$USER_UID
+Environment="QT_QPA_PLATFORM=wayland;xcb"
+# Graceful shutdown: SIGTERM first, then SIGKILL after 10s
+KillSignal=SIGTERM
+TimeoutStopSec=10
+# Auto-restart always (even after clean exit like Q press or window close)
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+SVCEOF
+
+echo "Service file created: $SERVICE_FILE"
+
+# Enable the service
+systemctl --user daemon-reload
+systemctl --user enable camera-dashboard.service
+echo "Service enabled (will start on next boot)"
+
+# Enable user linger so the user systemd instance starts at boot
+sudo loginctl enable-linger "$USER"
+echo "User linger enabled (systemd user instance starts at boot)"
+
+echo ""
+echo "To manage the service:"
+echo "  systemctl --user start camera-dashboard    # Start now"
+echo "  systemctl --user stop camera-dashboard     # Stop"
+echo "  systemctl --user restart camera-dashboard  # Restart"
+echo "  systemctl --user status camera-dashboard   # Check status"
+echo "  journalctl --user -u camera-dashboard -f   # View live logs"
+
+# ---------- 9) quick test ----------
+
+echo_section "9) Quick test"
 
 if timeout 5 python3 -c "
 from PyQt6 import QtWidgets
@@ -183,12 +243,21 @@ else
   echo "Quick test had issues (this may be normal if no display is available)"
 fi
 
-echo_section "9) Finished"
+echo_section "10) Finished"
 
 cat <<EOF
 Installation complete!
 
-To run the app:
+Auto-start: The app will launch automatically on boot.
+  No login or interaction required -- just power on the Pi.
+
+To manage the service:
+  systemctl --user start camera-dashboard    # Start now
+  systemctl --user stop camera-dashboard     # Stop
+  systemctl --user restart camera-dashboard  # Restart
+  systemctl --user status camera-dashboard   # Check status
+
+To run manually (if service is stopped):
 
   Double-click "Camera Dashboard" on your desktop
   
