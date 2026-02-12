@@ -41,7 +41,18 @@ def _check_gstreamer_available() -> bool:
     try:
         # Check if OpenCV has GStreamer backend support
         build_info = cv2.getBuildInformation()
-        _gstreamer_available = "GStreamer" in build_info and "YES" in build_info.split("GStreamer")[1].split("\n")[0]
+        gstreamer_line = None
+        for line in build_info.splitlines():
+            stripped = line.strip()
+            if stripped.lower().startswith("gstreamer"):
+                gstreamer_line = stripped
+                break
+        if gstreamer_line is None:
+            _gstreamer_available = False
+        else:
+            tokens = gstreamer_line.split()
+            last_token = tokens[-1].upper() if tokens else ""
+            _gstreamer_available = last_token == "YES"
         if _gstreamer_available:
             logging.info("GStreamer support detected in OpenCV build")
         else:
