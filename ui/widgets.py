@@ -149,38 +149,38 @@ class CameraWidget(QtWidgets.QWidget):
         layout.setContentsMargins(2, 2, 2, 2)  # Small margin to show border
         self._layout = layout  # Store reference for swap mode margin changes
 
-        # Settings tile uses buttons instead of a video stream.
+        # Settings tile uses clickable areas instead of buttons (more reliable for touch)
         if self.settings_mode:
             self.video_label.setText(self.placeholder_text or "SETTINGS")
             self.video_label.setStyleSheet("color: #ffffff; font-size: 20px;")
 
-            button_style = (
-                "QPushButton { padding: 10px 16px; font-size: 18px; min-width: 100px; }"
-            )
+            label_style = "QLabel { padding: 10px; }"
 
-            restart_button = QtWidgets.QPushButton("Restart")
-            restart_button.setStyleSheet(button_style)
-            if on_restart:
-                restart_button.clicked.connect(on_restart)
+            # Store callbacks for dynamic button creation
+            self._label_buttons = {}
 
-            night_mode_button = QtWidgets.QPushButton("Nightmode: Off")
-            night_mode_button.setStyleSheet(button_style)
-            if on_night_mode_toggle:
-                night_mode_button.clicked.connect(on_night_mode_toggle)
-            self.night_mode_button = night_mode_button
+            def add_setting_button(text: str, callback):
+                label = QtWidgets.QLabel(text)
+                label.setStyleSheet(label_style)
+                label.setAttribute(QtCore.Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
+                label.installEventFilter(self)
+                label.setObjectName(f"btn_{text}")
+                self._label_buttons[label.objectName()] = callback
+                return label
 
-            exit_button = QtWidgets.QPushButton("Exit")
-            exit_button.setStyleSheet(button_style)
-            exit_button.clicked.connect(self._exit_app)
+            restart_label = add_setting_button("Restart", on_restart)
+            night_mode_label = add_setting_button("Nightmode: Off", on_night_mode_toggle)
+            exit_label = add_setting_button("Exit", self._exit_app)
+            self.night_mode_button = night_mode_label
 
             layout.addStretch(1)
             layout.addWidget(self.video_label)
             layout.addSpacing(6)
-            layout.addWidget(restart_button, alignment=Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(restart_label, alignment=Qt.AlignmentFlag.AlignCenter)
             layout.addSpacing(4)
-            layout.addWidget(night_mode_button, alignment=Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(night_mode_label, alignment=Qt.AlignmentFlag.AlignCenter)
             layout.addSpacing(4)
-            layout.addWidget(exit_button, alignment=Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(exit_label, alignment=Qt.AlignmentFlag.AlignCenter)
             layout.addStretch(1)
         else:
             layout.addWidget(self.video_label)
@@ -341,6 +341,33 @@ class CameraWidget(QtWidgets.QWidget):
 
     def eventFilter(self, a0: QtCore.QObject, a1: QtCore.QEvent) -> bool:  # type: ignore[override]
         """Handle touch and mouse events from widget or label."""
+        # Handle settings tile label buttons - check if this label is in our buttons dict
+        if self.settings_mode and isinstance(a0, QtWidgets.QLabel):
+            obj_name = a0.objectName()
+            if obj_name in self._label_buttons:
+                if a1.type() == QtCore.QEvent.Type.TouchBegin:
+                    self._touch_active = True
+                    self._press_time = time.time() * 1000.0
+                    return True
+                if a1.type() == QtCore.QEvent.Type.TouchEnd:
+                    if self._touch_active:
+                        self._touch_active = False
+                        callback = self._label_buttons.get(obj_name)
+                        if callback:
+                            callback()
+                    return True
+                if a1.type() == QtCore.QEvent.Type.MouseButtonPress:
+                    return True
+                if a1.type() == QtCore.QEvent.Type.MouseButtonRelease:
+                    callback = self._label_buttons.get(obj_name)
+                    if callback:
+                        callback()
+                    return True
+
+        # Let QPushButton pass through
+        if isinstance(a0, QtWidgets.QPushButton):
+            return super().eventFilter(a0, a1)
+
         if a0 not in (self, self.video_label) or a1 is None:
             return super().eventFilter(a0, a1)
 
