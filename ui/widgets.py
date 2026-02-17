@@ -175,12 +175,12 @@ class CameraWidget(QtWidgets.QWidget):
             night_mode_label = add_setting_button("Nightmode: Off", on_night_mode_toggle)
             self.night_mode_button = night_mode_label
 
-            # Brightness buttons (15, 60, 80, 100)
+            # Brightness buttons
             brightness_layout = QtWidgets.QHBoxLayout()
             brightness_layout.setSpacing(4)
             self._brightness_buttons = {}
-            brightness_values = [15, 60, 80, 100]
-            brightness_labels = ["Dark", "Dim", "Bright", "Normal"]
+            brightness_values = [15, 60, 80, 100, 150]
+            brightness_labels = ["15%", "60%", "80%", "100%", "150%"]
 
             # Store brightness callback for external setting
             self._on_brightness_change = on_brightness_change
@@ -204,12 +204,18 @@ class CameraWidget(QtWidgets.QWidget):
 
             self._current_brightness = 100
 
+            # Add brightness label above buttons
+            brightness_label = QtWidgets.QLabel("Brightness")
+            brightness_label.setStyleSheet("color: white; padding: 4px; font-weight: bold;")
+            brightness_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
             # Left: Restart, below it Nightmode, below that brightness buttons
             left_layout = QtWidgets.QVBoxLayout()
             left_layout.addWidget(restart_label, alignment=Qt.AlignmentFlag.AlignCenter)
             left_layout.addSpacing(8)
             left_layout.addWidget(night_mode_label, alignment=Qt.AlignmentFlag.AlignCenter)
             left_layout.addSpacing(8)
+            left_layout.addWidget(brightness_label, alignment=Qt.AlignmentFlag.AlignCenter)
             brightness_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             left_layout.addLayout(brightness_layout)
 
